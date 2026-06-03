@@ -221,6 +221,25 @@ func reply(_ fd: Int32, lsb: Bool, detail: UInt8 = 0, extra: ([UInt8]) = [], bui
     writeAll(fd, w.bytes)
 }
 
+// Generic reply: `payload` is everything after the 8-byte reply header; length
+// is derived. Handles fixed replies of any size (e.g. GetWindowAttributes=len3).
+func replyRaw(_ fd: Int32, lsb: Bool, detail: UInt8, _ payload: [UInt8]) {
+    var p = payload
+    while p.count < 24 { p.append(0) }
+    while p.count % 4 != 0 { p.append(0) }
+    var w = ByteWriter(lsb: lsb)
+    w.u8(1); w.u8(detail); w.u16(seq); w.u32(UInt32((p.count - 24) / 4))
+    w.raw(p)
+    writeAll(fd, w.bytes)
+}
+
+// Reply-expecting opcodes we answer generically (length-0, 32-byte) when not
+// specifically modeled — so nxproxy/nxagent round-trips never stall.
+let replyExpecting: Set<UInt8> = [
+    17, 26, 31, 39, 45, 47, 48, 49, 52, 73, 83, 85, 86, 87, 88, 91, 92,
+    104, 110, 116, 118
+]
+
 // MARK: - serve
 
 let path = "/tmp/.X11-unix/X\(displayNum)"
@@ -348,6 +367,27 @@ func serveClient(_ cfd: Int32) {
             reply(cfd, lsb: lsb) { $0.u32(ROOT); $0.u32(0); $0.u16(0); $0.u16(0) }
         case 23: // GetSelectionOwner -> none
             reply(cfd, lsb: lsb) { $0.u32(0) }
+        case 3: // GetWindowAttributes (length 3)
+            _ = r.u32()
+            var p = ByteWriter(lsb: lsb)
+            p.u32(VISUAL); p.u16(1); p.u8(0); p.u8(1)
+            p.u32(0); p.u32(0); p.u8(0); p.u8(1); p.u8(2); p.u8(0)
+            p.u32(CMAP); p.u32(0); p.u32(0); p.u16(0); p.u16(0)
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
+        case 44: // QueryKeymap -> all up
+            replyRaw(cfd, lsb: lsb, detail: 0, [UInt8](repeating: 0, count: 32))
+        case 103: // GetKeyboardControl (length 5)
+            var p = ByteWriter(lsb: lsb)
+            p.u32(0); p.u8(0); p.u8(0); p.u16(0); p.u16(0); p.u16(0)
+            p.raw([UInt8](repeating: 0, count: 32))
+            replyRaw(cfd, lsb: lsb, detail: 1, p.bytes)
+        case 106: // GetPointerControl
+            var p = ByteWriter(lsb: lsb); p.u16(2); p.u16(1); p.u16(4)
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
+        case 108: // GetScreenSaver
+            replyRaw(cfd, lsb: lsb, detail: 0, [0,0,0,0,0,0])
+        case 117: // GetPointerMapping -> 3 buttons
+            replyRaw(cfd, lsb: lsb, detail: 3, [1, 2, 3])
 
         case 1: // CreateWindow: depth(detail), wid, parent, x,y,w,h, border, class, visual, mask, values
             let wid = r.u32(); _ = r.u32()
@@ -405,6 +445,11 @@ func serveClient(_ cfd: Int32) {
             }
 
         default:
+            if replyExpecting.contains(opcode) {
+                // Keep the stream in sync: a correctly-framed empty reply so
+                // nxproxy/nxagent round-trips never stall waiting on us.
+                replyRaw(cfd, lsb: lsb, detail: 0, [])
+            }
             unknown[opcode, default: 0] += 1
         }
     }

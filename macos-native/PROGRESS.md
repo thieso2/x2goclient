@@ -219,6 +219,36 @@ deeper-investigation item. The **capture-bridge** path already renders the full
 live XFCE desktop in Metal today (docs/e2e-native-metal.png); its only gap is
 input (XTEST on XQuartz 2.8.5).
 
+
+## Deep diagnosis of the teardown (server source consulted)
+
+Completed the X reply surface: GetWindowAttributes(len-3), QueryKeymap,
+GetKeyboardControl(len-5), GetPointerControl/Mapping, GetScreenSaver, and a
+correctly-framed length-0 fallback for all other reply-expecting opcodes (so
+nxproxy/nxagent round-trips can never stall on us). Plus events (MapNotify/
+Expose), AllocColor, geometry/pointer/tree replies, keymap fix.
+
+Result: **unchanged** — deterministic break at ~88 requests / ~2s. Ruled out,
+with evidence, each candidate cause:
+- Not a blocked reply (nxproxy is async; full reply set didn't help).
+- Not a modal-dialog GUI stall (0 dialogs this run; same break).
+- Not a client crash (Qt client stays alive `RN` after the break).
+- Not our server crashing (it logs the disconnect and keeps serving).
+- Not nxagent crashing (server log: clean suspend, no protocol error).
+- nxproxy reports **no local X error** — only "Failure reading from the peer
+  proxy on FD#5"; nxagent reports the mirror ("...on FD#8"). nxcomp source
+  (Loop.cpp HandleShutdown, getShutdown()==0) confirms: the **NX peer TCP was
+  severed with no clean shutdown** — i.e. the SSH-tunnelled nxproxy↔nxagent
+  channel dies, even though both proxies, the client, and our server live on.
+
+So our X-server protocol is *accepted* by nxproxy; the teardown is in the
+nxproxy↔nxagent NX back-channel/tunnel and is triggered only when the local X
+server is ours (XQuartz works at the same instant). Isolating it needs
+**instrumenting nxproxy** (rebuild nxcomp with logging) or running nxproxy
+standalone against our server with a controlled peer — a deeper multi-hour
+investigation. This is the open blocker; the native endpoint streams initial
+content but not the full desktop yet.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
