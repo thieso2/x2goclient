@@ -412,14 +412,13 @@ if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
             injectButton(1, down: true, fx: x, fy: y); Thread.sleep(forTimeInterval: 0.08)
             injectButton(1, down: false, fx: x, fy: y)
         }
-        FileHandle.standardError.write("=== INPUT-BEGIN ===\n".data(using: .utf8)!)
-        // Click the file-manager dock icon and wait for Thunar to open.
-        clickLeft(762, 775)
-        for s in 0..<8 {
-            Thread.sleep(forTimeInterval: 1.5)
-            compDumpStack("thunar+\(s)")
-            fb.snapshotPPM(to: "/tmp/x2go_fb_thunar\(s).ppm")
-        }
+        FileHandle.standardError.write("=== INPUT-BEGIN === target win=\(inputWin) fd=\(inputFd)\n".data(using: .utf8)!)
+        // Click the application-menu / first dock icon to verify clicks register.
+        injectMotion(512, 775); Thread.sleep(forTimeInterval: 0.3)
+        clickLeft(512, 775)
+        Thread.sleep(forTimeInterval: 2.5)
+        compDumpStack("after-click")
+        fb.snapshotPPM(to: "/tmp/x2go_fb_click.ppm")
         FileHandle.standardError.write("inputtest: snapshots written\n".data(using: .utf8)!)
     }
 }

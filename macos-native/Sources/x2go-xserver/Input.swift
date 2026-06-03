@@ -110,6 +110,7 @@ let inputLock = NSLock()
 /// on the busiest connection — that is nxagent's nested input window.
 func noteInputWindow(_ fd: Int32, _ lsb: Bool, _ wid: UInt32, _ mask: UInt32, _ area: Int) {
     guard (mask & InputSelectMask) != 0 else { return }
+    guard wid != ROOT else { return }   // prefer nxagent's nested default window, not our root
     inputLock.lock(); defer { inputLock.unlock() }
     if area > inputWinArea {            // strictly larger: keep the first full-screen input window
         inputWinArea = area; inputWin = wid; inputFd = fd; inputLsb = lsb

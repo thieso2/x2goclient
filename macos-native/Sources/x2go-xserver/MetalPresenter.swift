@@ -80,7 +80,7 @@ final class FBView: NSView {
     let fb: Framebuffer
     let renderer: MetalRenderer
     let metalLayer = CAMetalLayer()
-    var link: CAMetalDisplayLink?
+    var renderThread: Thread?
 
     init(fb: Framebuffer) {
         self.fb = fb
@@ -149,11 +149,20 @@ final class FBView: NSView {
     }
 
     func start() {
-        let dl = CAMetalDisplayLink(metalLayer: metalLayer)
-        dl.delegate = renderer
-        dl.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
-        dl.add(to: .main, forMode: .common)
-        link = dl
+        // Drive the display link on a dedicated thread so its per-frame texture
+        // upload + present never competes with the main run loop's NSEvent
+        // delivery (which would make mouse/keyboard input feel unresponsive).
+        let layer = metalLayer, rndr = renderer
+        let t = Thread {
+            let dl = CAMetalDisplayLink(metalLayer: layer)
+            dl.delegate = rndr
+            dl.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            dl.add(to: .current, forMode: .common)
+            RunLoop.current.run()
+        }
+        t.stackSize = 1 << 20
+        t.start()
+        renderThread = t
     }
 }
 
