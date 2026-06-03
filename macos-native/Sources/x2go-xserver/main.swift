@@ -113,6 +113,12 @@ func listenUnix(_ path: String) -> Int32 {
         ap.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) }
     }
     precondition(r == 0, "bind(\(path)) failed errno=\(errno)")
+    // Big buffers BEFORE listen so accepted sockets inherit them. macOS UNIX
+    // sockets default to ~8KB, which paces nxproxy's request burst to us 8KB at
+    // a time and starves the NX peer/token channel.
+    var bsz: Int32 = 4 << 20
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bsz, socklen_t(MemoryLayout<Int32>.size))
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bsz, socklen_t(MemoryLayout<Int32>.size))
     precondition(listen(fd, 4) == 0, "listen failed")
     return fd
 }

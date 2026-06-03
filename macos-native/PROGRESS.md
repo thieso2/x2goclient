@@ -288,6 +288,39 @@ Net: native X server proven (handshake + drawing + Metal + real session connects
 and renders initial content); a **full streaming desktop is not yet achieved**
 and is gated on the NX back-channel issue above.
 
+
+## Final conclusion (source-informed) — native endpoint hits an NX flow-control wall
+
+Confirmed from nx-libs source (nxcomp/src/Proxy.cpp): NX uses **token flow
+control** (control/split/data tokens). nxagent spends data tokens as it sends,
+stops at its initial budget (~2.6 KB), and waits for nxproxy to grant more.
+nxproxy grants tokens while servicing the peer channel.
+
+With our :77 X server the exchange stalls **deterministically at ~2588 bytes**
+and never recovers. Tried (no effect on the 2588 number): per-request log
+removal, async writer (no I/O deadlock), 1 MB then 4 MB socket buffers
+(macOS ignores SO_RCVBUF on AF_UNIX — pacing stayed 8 KB), full reply surface
+with correct framing, Map/Expose events, keymap fix, disabling printing/
+file-sharing. nxproxy reports **no local X protocol error**; it simply has
+"nothing to flush to the proxy" and the peer link then closes.
+
+Assessment: our hand-written X server is *accepted* by nxproxy at the protocol
+level, but driving a real nxagent session to a full desktop requires matching
+nxcomp's agent-mode expectations closely enough that its token/relay loop keeps
+progressing — effectively implementing a much more complete X server (likely incl.
+RENDER, since nxagent uses "alpha channel in render extension") and understanding
+the agent-mode channel/token handling. That is genuine multi-session research.
+
+### Bottom line for the native client
+- **Achieved & e2e-validated:** native Swift/SwiftUI/**Metal** X server; real X
+  clients (xdpyinfo) connect; core drawing renders to Metal (no XQuartz); a real
+  X2Go session connects, establishes, and streams initial content (X11 logo).
+- **Not achieved:** a full streaming XFCE desktop through the native endpoint —
+  blocked by the NX token/flow-control negotiation above.
+- **Already works (other path):** the capture-bridge renders the *complete* live
+  XFCE desktop in a native Metal window (docs/e2e-native-metal.png); only input
+  is missing (XTEST absent on XQuartz 2.8.5 → use 2.8.4 or the native endpoint).
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
