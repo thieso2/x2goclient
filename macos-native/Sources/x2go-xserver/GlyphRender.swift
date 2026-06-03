@@ -66,12 +66,16 @@ func renderAddGlyphs(_ body: [UInt8], lsb: Bool) {
 func renderCompositeGlyphs(_ body: [UInt8], lsb: Bool, idBytes: Int) {
     var r = ByteReader(body, lsb: lsb)
     _ = r.u8(); r.skip(3)                       // op + pad
-    _ = r.u32()                                 // src picture
+    let srcP = r.u32()                          // src picture (pen colour)
     let dstP = r.u32()
     _ = r.u32()                                 // mask format
     var gsid = r.u32()
     _ = r.u16(); _ = r.u16()                    // srcX, srcY
     guard let dst = pictures[dstP] else { return }
+    // Glyph colour comes from the source picture (usually a solid fill of the
+    // pen colour). Without this, text is drawn black — invisible on dark
+    // backgrounds (e.g. a terminal). Default to black if the source is unknown.
+    let col = solidPictures[srcP] ?? (0, 0, 0)
 
     var penX = 0, penY = 0
     drawablesLock.lock()
@@ -96,14 +100,14 @@ func renderCompositeGlyphs(_ body: [UInt8], lsb: Bool, idBytes: Int) {
                 let bx = penX - g.originX, by = penY - g.originY
                 for yy in 0..<g.h {
                     for xx in 0..<g.w {
-                        let a = g.alpha[yy * g.w + xx]
+                        let a = Int(g.alpha[yy * g.w + xx])
                         if a == 0 { continue }
                         let p = drwGet(dst, bx + xx, by + yy)
-                        // blend toward black by coverage
-                        let inv = 255 - Int(a)
-                        let nr = UInt8(Int(p.0) * inv / 255)
-                        let ng = UInt8(Int(p.1) * inv / 255)
-                        let nb = UInt8(Int(p.2) * inv / 255)
+                        // blend dst toward the pen colour by glyph coverage
+                        let inv = 255 - a
+                        let nr = UInt8((Int(p.0) * inv + Int(col.0) * a) / 255)
+                        let ng = UInt8((Int(p.1) * inv + Int(col.1) * a) / 255)
+                        let nb = UInt8((Int(p.2) * inv + Int(col.2) * a) / 255)
                         drwSet(dst, bx + xx, by + yy, (nr, ng, nb, 0xff))
                     }
                 }
