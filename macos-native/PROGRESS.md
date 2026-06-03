@@ -100,6 +100,16 @@ Plan + validation ladder (commit each rung):
 Honest note: a complete X server is huge; the goal here is a *minimal* one
 sufficient for nxagent/nxproxy, proven rung-by-rung against real X clients.
 
+  - **2026-06-03 (NX endpoint)**
+    - Rung 1 ✓ — Swift X server handshake: `xdpyinfo` + `XOpenDisplay(":77")`
+      connect and read our setup (1280x800, depth-24 TrueColor). _committed_
+    - Rung 2/3 ✓ — framebuffer + drawing: handled CreateGC/ChangeGC,
+      PolyFillRectangle, PutImage(ZPixmap), ClearArea. A real X client drew
+      three colored rects + an image and our server rendered them pixel-correct
+      (docs/e2e-xserver-framebuffer.png). This framebuffer is the Metal surface.
+    - Next: present the framebuffer via Metal in the SwiftUI window; then point a
+      real session's nxproxy at `:77` (RENDER subset needed for full XFCE).
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**

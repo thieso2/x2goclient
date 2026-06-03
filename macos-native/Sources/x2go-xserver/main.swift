@@ -18,6 +18,80 @@ let VISUAL: UInt32 = 0x0000_0021
 
 signal(SIGPIPE, SIG_IGN)
 
+// MARK: - framebuffer (the surface we'll hand to Metal)
+
+final class Framebuffer: @unchecked Sendable {
+    let w: Int, h: Int
+    var px: [UInt8]            // BGRA8, w*h*4
+    let lock = NSLock()
+    init(_ w: Int, _ h: Int) {
+        self.w = w; self.h = h
+        px = [UInt8](repeating: 0, count: w * h * 4)
+        // init to a dark slate so "nothing drawn yet" is visibly distinct from black
+        for i in stride(from: 0, to: px.count, by: 4) {
+            px[i] = 0x30; px[i+1] = 0x28; px[i+2] = 0x20; px[i+3] = 0xff
+        }
+    }
+    func fillRect(_ x: Int, _ y: Int, _ rw: Int, _ rh: Int, _ bgra: (UInt8,UInt8,UInt8)) {
+        lock.lock(); defer { lock.unlock() }
+        let x0 = max(0, x), y0 = max(0, y)
+        let x1 = min(w, x + rw), y1 = min(h, y + rh)
+        var yy = y0
+        while yy < y1 {
+            var xx = x0
+            let row = yy * w * 4
+            while xx < x1 {
+                let o = row + xx * 4
+                px[o] = bgra.0; px[o+1] = bgra.1; px[o+2] = bgra.2; px[o+3] = 0xff
+                xx += 1
+            }
+            yy += 1
+        }
+    }
+    /// Blit a ZPixmap (BGRA/BGRX, 32bpp) region into the framebuffer.
+    func putImageZ(_ dstX: Int, _ dstY: Int, _ iw: Int, _ ih: Int, _ data: ArraySlice<UInt8>) {
+        lock.lock(); defer { lock.unlock() }
+        let bytesPerRow = iw * 4
+        data.withUnsafeBytes { src in
+            for ry in 0..<ih {
+                let dy = dstY + ry
+                if dy < 0 || dy >= h { continue }
+                for rx in 0..<iw {
+                    let dx = dstX + rx
+                    if dx < 0 || dx >= w { continue }
+                    let so = ry * bytesPerRow + rx * 4
+                    if so + 3 >= src.count { continue }
+                    let o = (dy * w + dx) * 4
+                    px[o]   = src[so]
+                    px[o+1] = src[so+1]
+                    px[o+2] = src[so+2]
+                    px[o+3] = 0xff
+                }
+            }
+        }
+    }
+    func snapshotPPM(to path: String) {
+        lock.lock(); let copy = px; lock.unlock()
+        var out = Data("P6\n\(w) \(h)\n255\n".utf8)
+        out.reserveCapacity(out.count + w*h*3)
+        var rgb = [UInt8](repeating: 0, count: w*h*3)
+        for i in 0..<(w*h) {
+            rgb[i*3]   = copy[i*4+2]  // R
+            rgb[i*3+1] = copy[i*4+1]  // G
+            rgb[i*3+2] = copy[i*4]    // B
+        }
+        out.append(contentsOf: rgb)
+        try? out.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+nonisolated(unsafe) let fb = Framebuffer(1280, 800)
+nonisolated(unsafe) var gcForeground: [UInt32: (UInt8,UInt8,UInt8)] = [:]
+
+func pixelToBGRA(_ v: UInt32) -> (UInt8,UInt8,UInt8) {
+    (UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff))
+}
+
 // MARK: - socket
 
 func listenUnix(_ path: String) -> Int32 {
@@ -146,6 +220,29 @@ func reply(_ fd: Int32, lsb: Bool, detail: UInt8 = 0, extra: ([UInt8]) = [], bui
 
 let path = "/tmp/.X11-unix/X\(displayNum)"
 let lfd = listenUnix(path)
+
+// Periodically snapshot the framebuffer for headless validation (and as the
+// surface Metal will consume once wired into the app).
+Thread.detachNewThread {
+    while true { fb.snapshotPPM(to: "/tmp/x2go_fb.ppm"); Thread.sleep(forTimeInterval: 0.5) }
+}
+
+func si16(_ v: UInt16) -> Int { Int(Int16(bitPattern: v)) }
+// Extract the GCForeground (bit 0x4) value from a value-mask + value list.
+func foregroundFrom(_ r: inout ByteReader, mask: UInt32) -> (UInt8,UInt8,UInt8)? {
+    guard (mask & 0x4) != 0 else {
+        // still must consume values to stay aligned if caller continues reading
+        return nil
+    }
+    var idx = 0
+    var bit: UInt32 = 0x1
+    while bit < 0x4 { if (mask & bit) != 0 { idx += 1 }; bit <<= 1 }
+    var vals: [UInt32] = []
+    let total = (0..<32).reduce(0) { $0 + (((mask >> $1) & 1) != 0 ? 1 : 0) }
+    for _ in 0..<total { vals.append(r.u32()) }
+    guard idx < vals.count else { return nil }
+    return pixelToBGRA(vals[idx])
+}
 FileHandle.standardError.write("x2go-xserver: listening on \(path) (DISPLAY=:\(displayNum)), \(FB_W)x\(FB_H)\n".data(using: .utf8)!)
 
 while true {
@@ -196,6 +293,36 @@ while true {
         case 119: // GetModifierMapping -> 2 keycodes/modifier, all 0
             let extra = [UInt8](repeating: 0, count: 8 * 2)
             reply(cfd, lsb: lsb, detail: 2, extra: extra) { _ in }
+
+        case 55: // CreateGC: cid, drawable, value-mask, values
+            let cid = r.u32(); _ = r.u32(); let mask = r.u32()
+            if let fg = foregroundFrom(&r, mask: mask) { gcForeground[cid] = fg }
+        case 56: // ChangeGC: gc, value-mask, values
+            let gc = r.u32(); let mask = r.u32()
+            if let fg = foregroundFrom(&r, mask: mask) { gcForeground[gc] = fg }
+        case 70: // PolyFillRectangle: drawable, gc, rects[x,y,w,h]
+            _ = r.u32(); let gc = r.u32()
+            let fg = gcForeground[gc] ?? (0xc0, 0xc0, 0xc0)
+            let n = (body.count - 8) / 8
+            for _ in 0..<max(0, n) {
+                let x = si16(r.u16()), y = si16(r.u16())
+                let rw = Int(r.u16()), rh = Int(r.u16())
+                fb.fillRect(x, y, rw, rh, fg)
+            }
+        case 61: // ClearArea: window, x, y, w, h
+            _ = r.u32(); let x = si16(r.u16()), y = si16(r.u16())
+            var rw = Int(r.u16()), rh = Int(r.u16())
+            if rw == 0 { rw = fb.w }; if rh == 0 { rh = fb.h }
+            fb.fillRect(x, y, rw, rh, (0x30, 0x28, 0x20))
+        case 72: // PutImage: format(detail), drawable, gc, w,h, dstx,dsty, left-pad, depth, pad2, data
+            let format = detail
+            _ = r.u32(); _ = r.u32()
+            let iw = Int(r.u16()), ih = Int(r.u16())
+            let dx = si16(r.u16()), dy = si16(r.u16())
+            if format == 2, iw > 0, ih > 0, body.count >= 20 {   // ZPixmap
+                fb.putImageZ(dx, dy, iw, ih, body[20...])
+            }
+
         default:
             unknown[opcode, default: 0] += 1
         }
