@@ -132,7 +132,12 @@ func compositeToFramebuffer() {
                     var so = (y * sw + x0) * 4
                     var dp = ((oy + y) * W + (ox + x0)) * 4
                     for _ in x0..<x1 {
-                        dst[dp] = src[so]; dst[dp+1] = src[so+1]; dst[dp+2] = src[so+2]; dst[dp+3] = 0xff
+                        // Skip undrawn pixels (alpha 0): a WM frame only paints its
+                        // title bar/borders, so its undrawn centre must stay
+                        // transparent and let the content child below show through.
+                        if src[so+3] != 0 {
+                            dst[dp] = src[so]; dst[dp+1] = src[so+1]; dst[dp+2] = src[so+2]; dst[dp+3] = 0xff
+                        }
                         so += 4; dp += 4
                     }
                 }

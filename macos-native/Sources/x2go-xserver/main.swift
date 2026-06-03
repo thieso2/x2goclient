@@ -175,6 +175,11 @@ func drwPutImageZ(_ d: UInt32, _ x: Int, _ y: Int, _ iw: Int, _ ih: Int, _ data:
 /// CopyArea/Composite: move a rectangle of pixels between any two drawables.
 func drwCopy(_ src: UInt32, _ dst: UInt32, _ sx: Int, _ sy: Int, _ dx: Int, _ dy: Int, _ cw: Int, _ ch: Int) {
     drawablesLock.lock(); defer { drawablesLock.unlock() }
+    if drawLog, cw * ch > 50000, let pm = pixmaps[src] {
+        var nonzero = 0, i = 0
+        while i < pm.px.count { if pm.px[i] != 0 || pm.px[i+1] != 0 || pm.px[i+2] != 0 { nonzero += 1 }; i += 4 * 97 }
+        dlog("BIGCOPY src-pixmap=\(src)[\(pm.w)x\(pm.h)] nonzero-sample=\(nonzero) -> \(drwKind(dst))")
+    }
     for ry in 0..<ch { for rx in 0..<cw {
         let p = drwGet(src, sx + rx, sy + ry)
         if p.3 == 0 && pixmaps[src] != nil { continue }   // skip fully-transparent source px
