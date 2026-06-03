@@ -59,6 +59,12 @@ final class FBView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    static let ilog = ProcessInfo.processInfo.environment["X2GO_INPUTLOG"] != nil
+    private func il(_ s: String) {
+        guard FBView.ilog else { return }
+        FileHandle.standardError.write("NSEVENT \(s)\n".data(using: .utf8)!)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
@@ -80,7 +86,7 @@ final class FBView: NSView {
     override func mouseDragged(with e: NSEvent)      { let (x, y) = fbPoint(e); injectMotion(x, y) }
     override func rightMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
     override func otherMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
-    override func mouseDown(with e: NSEvent)         { let (x, y) = fbPoint(e); injectButton(1, down: true,  fx: x, fy: y) }
+    override func mouseDown(with e: NSEvent)         { let (x, y) = fbPoint(e); il("mouseDown -> fb(\(x),\(y)) win=\(inputWin) fd=\(inputFd)"); injectButton(1, down: true,  fx: x, fy: y) }
     override func mouseUp(with e: NSEvent)           { let (x, y) = fbPoint(e); injectButton(1, down: false, fx: x, fy: y) }
     override func rightMouseDown(with e: NSEvent)    { let (x, y) = fbPoint(e); injectButton(3, down: true,  fx: x, fy: y) }
     override func rightMouseUp(with e: NSEvent)      { let (x, y) = fbPoint(e); injectButton(3, down: false, fx: x, fy: y) }
@@ -91,7 +97,7 @@ final class FBView: NSView {
         if e.deltaY > 0.1 { injectScroll(up: true, fx: x, fy: y) }
         else if e.deltaY < -0.1 { injectScroll(up: false, fx: x, fy: y) }
     }
-    override func keyDown(with e: NSEvent) { injectKey(macKeyCode: e.keyCode, down: true) }
+    override func keyDown(with e: NSEvent) { il("keyDown code=\(e.keyCode)"); injectKey(macKeyCode: e.keyCode, down: true) }
     override func keyUp(with e: NSEvent)   { injectKey(macKeyCode: e.keyCode, down: false) }
     override func flagsChanged(with e: NSEvent) {
         let f = e.modifierFlags

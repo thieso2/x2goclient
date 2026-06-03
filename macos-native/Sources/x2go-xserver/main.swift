@@ -115,6 +115,7 @@ nonisolated(unsafe) var windows: [UInt32: (x: Int, y: Int, w: Int, h: Int, mask:
 nonisolated(unsafe) var winParent: [UInt32: UInt32] = [:]
 nonisolated(unsafe) var pixmaps: [UInt32: Pixmap] = [:]
 nonisolated(unsafe) var pictures: [UInt32: UInt32] = [:]   // RENDER Picture id -> drawable id
+nonisolated(unsafe) var solidPictures: [UInt32: (UInt8,UInt8,UInt8)] = [:]  // CreateSolidFill colour (BGRA)
 let drawablesLock = NSLock()
 nonisolated(unsafe) let drawLog = ProcessInfo.processInfo.environment["X2GO_DRAWLOG"] != nil
 nonisolated(unsafe) var drawLogN = 0
@@ -733,7 +734,13 @@ func serveClient(_ cfd: Int32) {
                 let pid = r.u32(); let drw = r.u32()
                 drawablesLock.lock(); pictures[pid] = drw; drawablesLock.unlock()
             case 7: // FreePicture: pid
-                let pid = r.u32(); drawablesLock.lock(); pictures[pid] = nil; drawablesLock.unlock()
+                let pid = r.u32(); drawablesLock.lock(); pictures[pid] = nil; solidPictures[pid] = nil; drawablesLock.unlock()
+            case 33: // CreateSolidFill: pid, color(red,green,blue,alpha u16)
+                let pid = r.u32()
+                let rd = r.u16(), gn = r.u16(), bl = r.u16(); _ = r.u16()
+                drawablesLock.lock()
+                solidPictures[pid] = (UInt8(bl >> 8), UInt8(gn >> 8), UInt8(rd >> 8))
+                drawablesLock.unlock()
             case 8: // Composite: op, src, mask, dst, src/mask/dst coords, w, h
                 _ = r.u8(); r.skip(3)
                 let srcP = r.u32(); _ = r.u32(); let dstP = r.u32()
@@ -741,9 +748,12 @@ func serveClient(_ cfd: Int32) {
                 _ = r.u16(); _ = r.u16()                 // mask x,y
                 let dx = si16(r.u16()), dy = si16(r.u16())
                 let cw = Int(r.u16()), ch = Int(r.u16())
-                dlog("Composite src-pict=\(srcP)->\(pictures[srcP].map(drwKind) ?? "?") dst-pict=\(dstP)->\(pictures[dstP].map(drwKind) ?? "?") src(\(sx),\(sy)) dst(\(dx),\(dy)) \(cw)x\(ch)")
-                if let s = pictures[srcP], let d = pictures[dstP], cw > 0, ch > 0 {
-                    drwCopy(s, d, sx, sy, dx, dy, cw, ch)
+                if cw > 0, ch > 0, let d = pictures[dstP] {
+                    if let col = solidPictures[srcP] {     // solid-fill source (menu/popup bg)
+                        drwFill(d, dx, dy, cw, ch, col)
+                    } else if let s = pictures[srcP] {
+                        drwCopy(s, d, sx, sy, dx, dy, cw, ch)
+                    }
                 }
             case 26: // FillRectangles: op, pad, dst, color(r,g,b,a u16), rects[x,y,w,h]
                 _ = r.u8(); r.skip(3)
@@ -758,8 +768,14 @@ func serveClient(_ cfd: Int32) {
                         drwFill(d, x, y, rw, rh, col)
                     }
                 }
+            case 17: renderCreateGlyphSet(r.u32())               // CreateGlyphSet
+            case 19: renderFreeGlyphSet(r.u32())                 // FreeGlyphSet
+            case 20: renderAddGlyphs(body, lsb: lsb)             // AddGlyphs
+            case 23: renderCompositeGlyphs(body, lsb: lsb, idBytes: 1)  // CompositeGlyphs8
+            case 24: renderCompositeGlyphs(body, lsb: lsb, idBytes: 2)  // CompositeGlyphs16
+            case 25: renderCompositeGlyphs(body, lsb: lsb, idBytes: 4)  // CompositeGlyphs32
             default:
-                break // CompositeGlyphs/Trapezoids/etc.: accept, no reply (text not yet rasterized)
+                break // Trapezoids/Triangles/etc.: accept, no reply
             }
 
         default:

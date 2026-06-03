@@ -50,4 +50,5 @@ struct ByteReader {
         return lsb ? (a | b << 8 | c << 16 | d << 24) : (a << 24 | b << 16 | c << 8 | d)
     }
     mutating func skip(_ n: Int) { off += n }
+    var remaining: Int { max(0, data.count - off) }
 }
