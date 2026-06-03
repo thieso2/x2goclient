@@ -8984,68 +8984,37 @@ QString ONMainWindow::getXDisplay()
 
     if (xsocket.isEmpty ())
     {
-        // Mac OS X 10.4 compatibility mode.
-        // There, it is possible no $DISPLAY variable is set.
-        // Start X11 manually. First, find a free display number.
+        // A macOS app launched from Finder / LaunchServices inherits no DISPLAY,
+        // and modern XQuartz is started on demand via launchd on display :0.
+        // Launch XQuartz (by the configured path if set, otherwise by name) and
+        // wait for its well-known :0 socket to appear, then use it.
 
-        x2goDebug<< "Entering 10.4 compat mode, checking for free X11 display.";
+        x2goDebug<< "No DISPLAY set; launching XQuartz and waiting for display :0.";
 
+        QString xdir = ConfigDialog::getXDarwinDirectory ();
+        bool started = false;
+        if (!xdir.isEmpty () && QFile::exists (xdir))
+            started = QProcess::startDetached ("/usr/bin/open", QStringList () << xdir);
+        else
+            started = QProcess::startDetached ("/usr/bin/open", QStringList () << "-a" << "XQuartz");
 
-        int xFreeDisp = 0;
-        QDir xtmpdir ("/tmp/.X11-unix");
+        if (!started)
+            x2goDebug<< "Could not launch XQuartz via 'open'.";
 
-        if (xtmpdir.exists ())
+        // Wait (up to ~20s) for XQuartz to create /tmp/.X11-unix/X0.
+        const QString x0 ("/tmp/.X11-unix/X0");
+        for (int i = 0; (i < 20) && (!QFileInfo::exists (x0)); ++i)
         {
-            xtmpdir.setFilter (QDir::Files | QDir::System | QDir::NoSymLinks | QDir::NoDotAndDotDot);
-            xtmpdir.setSorting (QDir::Name);
-
-            QFileInfoList xtmpdirList = xtmpdir.entryInfoList ();
-            bool foundFreeDisp = FALSE;
-            xFreeDisp = -1;
-
-            for (int i = 0; (i < 2000) && (!foundFreeDisp); ++i)
-            {
-                QFileInfo xtmpdirFile (xtmpdir.absolutePath () + "/X" + QString::number (i));
-
-                if ((!xtmpdirFile.exists ()) && (!xtmpdirFile.isSymLink ()))
-                {
-                    xFreeDisp = i;
-                    foundFreeDisp = TRUE;
-                }
-            }
+            int sleeptime = 1;
+            while ((sleeptime = sleep (sleeptime))) {};
         }
 
-        // Control flow will go to error condition if no free display port has been found.
-        if (xFreeDisp != -1)
+        if (QFileInfo::exists (x0))
         {
-            xsocket = "/tmp/.X11-unix/X" + QString::number (xFreeDisp);
+            xsocket = ":0";
+            qputenv ("DISPLAY", ":0");
 
-            x2goDebug<< "Successfully detected free socket " << xsocket << ".";
-        }
-
-        if (!(xsocket.isEmpty ()))
-        {
-            QString xname = ConfigDialog::getXDarwinDirectory () + "/Contents/MacOS/X11";
-            QString xopt = ":" + QString::number (xFreeDisp);
-            QProcessEnvironment env = QProcessEnvironment::systemEnvironment ();
-            QProcess* startx = new QProcess (this);
-
-            x2goDebug<< "Starting the X server on free display port.";
-
-            env.insert (0, "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/X11R6/bin");
-
-            startx->setProcessEnvironment (env);
-            startx->startCommand (xname + QString (" ") + xopt, QIODevice::NotOpen);
-            if (startx->waitForStarted (3000))
-            {
-
-                x2goDebug<< "Sleeping for three seconds";
-                int sleeptime = 3;
-                while ((sleeptime = sleep (sleeptime))) {};
-
-                x2goDebug<< "Leaving OS X 10.4 compat mode.";
-
-            }
+            x2goDebug<< "XQuartz display :0 is up.";
         }
     }
 
