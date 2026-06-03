@@ -78,6 +78,28 @@ X2Go session (server) ──NX──▶ nxproxy ──▶ X display  ──CX11(
     input needs either XQuartz 2.8.4 (has XTEST) or — properly — the native
     protocol endpoint.
 
+## Native NX endpoint (the no-X11 core) — in progress
+
+New direction: instead of capturing from XQuartz, **be the X server that nxproxy
+connects to**. nxproxy decodes the NX stream into the X11 wire protocol and
+connects (as an X client) to `DISPLAY`; if that display is *our* Swift server,
+we own both display (→ Metal) and input (→ X events to nxproxy), with **no
+XQuartz / no X11 server dependency**.
+
+Plan + validation ladder (commit each rung):
+1. X11 socket `/tmp/.X11-unix/X77` + connection handshake/setup reply.
+   Validate: `DISPLAY=:77 xdpyinfo` connects and prints screen info.
+2. Core request dispatch (QueryExtension, InternAtom, GetProperty, Create*,
+   Map*, …). Validate: xdpyinfo completes; a trivial client maps a window.
+3. Drawing requests (PutImage/CopyArea/PolyFillRectangle/PolyText) → framebuffer
+   → reuse `MetalRenderer`. Validate: `xeyes`/`xterm` pixels appear in Metal.
+4. Input: native NSEvent → X events delivered to nxproxy. Validate: e2e typing.
+5. Point a real session's nxproxy at `:77` → XFCE desktop in the native window,
+   no XQuartz.
+
+Honest note: a complete X server is huge; the goal here is a *minimal* one
+sufficient for nxagent/nxproxy, proven rung-by-rung against real X clients.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
