@@ -18,14 +18,16 @@ echo ">> cleaning stale local + server processes..."
 pkill -f x2go-xserver 2>/dev/null
 pkill -f "x2goclient.app" 2>/dev/null
 ssh -o BatchMode=yes -i "$KEY" "thies@$SERVER" '
-  pkill -9 -u thies -f "xfce4|xfdesktop|xfwm4|xfsettingsd|nxagent|x2goagent" 2>/dev/null
-  sleep 1
   for s in $(x2golistsessions|cut -d"|" -f2); do x2goterminate-session "$s" >/dev/null 2>&1; done
+  sleep 1
+  pkill -9 -u thies -f "nxagent|x2goagent|x2goruncommand|dbus-run-session|xfce4|xfdesktop|xfwm4|xfsettingsd|x2goresume" 2>/dev/null
+  sleep 2
 ' 2>/dev/null
-sleep 1
+sleep 3
 
 echo ">> starting native Metal X server on :$DISP (a window will open)..."
-"$XSRV" "$DISP" &
+echo "   (X server log -> /tmp/x2go-native.log; input events logged there)"
+X2GO_INPUTLOG=1 "$XSRV" "$DISP" >/tmp/x2go-native.log 2>&1 &
 XPID=$!
 sleep 1.5
 
