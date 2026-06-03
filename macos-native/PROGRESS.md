@@ -338,22 +338,47 @@ relaying our X server output back to nxagent**, so nxagent times out
 (agent params 5000/...) and declares display failure. Our server is fine and
 keeps serving; nxproxy accepts our protocol (no local X error).
 
-Root cause (final): with a *minimal* hand-written X server, nxproxy's agent-mode
-relay loop (nxcomp ClientChannel/ServerChannel + token flow) doesn't forward our
-responses to nxagent, so nxagent times out. Making it forward requires matching
-nxcomp's agent-mode expectations far more completely — effectively a much fuller
-X server (RENDER, full visual/format set, exact reply semantics) plus
-understanding nxcomp's relay/token path. That is genuine multi-session,
-nxcomp-internals research, not a small fix.
+Root cause (was thought to be final — **WRONG**, see below): suspected nxcomp's
+agent-mode relay loop wasn't forwarding our responses. It actually was; the real
+cause was missing X-server capabilities that stalled nxagent's screen init.
 
-### Honest end state
-- ✅ Native Swift/SwiftUI/**Metal** X server: real X clients connect; core drawing
-  → Metal (no XQuartz); a real X2Go session connects, establishes, renders
-  initial content (X11 logo).
-- ❌ Full streaming XFCE desktop via the native endpoint — blocked by nxcomp
-  agent-mode relay not forwarding our responses (nxagent → Display failure).
-  Localized definitively; the fix is deep nxcomp-relay work.
-- ✅ Working full-desktop path remains the capture-bridge (docs/e2e-native-metal.png).
+## ✅ SOLVED — full native XFCE desktop streams into the Metal X server
+
+The "nxcomp relay won't forward our responses" conclusion was **wrong**. nxcomp/
+nxagent were fine; our hand-written X server was **missing capabilities nxagent
+requires to finish screen initialization**. Once provided, nxagent maps its
+windows and streams the full session. The fix chain:
+
+1. **RENDER extension** — session negotiates `render=1`; nxagent logs "Using
+   alpha channel in render extension". With RENDER absent, once GTK apps start
+   nxagent's Xlib I/O-errors mirroring RENDER → `nxagentDisplayErrorPredicate`
+   sets `ioError` → "Display failure detected". Advertising RENDER (QueryExtension
+   present, RenderQueryVersion 0.11, RenderQueryPictFormats RGB24+ARGB32) made
+   the session **sustain** (state R, no failure).
+2. **QueryColors** — we returned an empty/malformed reply; apps stalled at ~99
+   requests. Deriving RGB from the TrueColor pixel unblocked drawing (99 → 162).
+3. **Drawable layer** — pixmap-backed buffers + parent-aware window origins +
+   CopyArea + RENDER Composite/FillRectangles, so off-screen content blits out.
+4. **Core fonts** — ListFonts(fixed/cursor) + OpenFont + QueryFont (6x13) +
+   QueryTextExtents. **The final unlock**: without a usable font nxagent can't
+   complete screen init, so it never mapped windows or streamed. With fonts:
+   op8 MapWindow×28, op1 CreateWindow×101, op72 PutImage×206, CopyArea + RENDER —
+   the **full XFCE desktop renders** (~24.7k distinct colors).
+
+Also required: **server-side session hygiene** — leftover xfce/D-Bus processes
+from repeated test runs steal the `org.xfce.Panel` dbus name and kill new
+sessions ("Another instance took over"). Clean stale xfce/nxagent processes
+before each run.
+
+### End state
+- ✅ **Native Swift / SwiftUI / Metal X server** (`x2go-xserver`): a real
+  nxproxy/nxagent X2Go session against 10.248.1.20 streams the **complete XFCE
+  desktop** (Greybird wallpaper + mouse logo, panel with menu/tray/clock,
+  Home/File System/Trash icons, readable labels) into a native Metal framebuffer.
+  **No XQuartz, no capture-bridge.** See `docs-native-desktop.png`.
+- 🔜 Remaining polish: rasterize `CompositeGlyphs` (most text already arrives as
+  PutImage, so the desktop is legible); live input injection over the same
+  connection (motion/button/key → nxagent); incremental damage-driven updates.
 
 ## Key finding
 
