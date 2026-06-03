@@ -104,8 +104,12 @@ func compDumpStack(_ tag: String) {
 nonisolated(unsafe) var compFrame = 0
 /// Rebuild the framebuffer from all mapped window surfaces, bottom to top.
 func compositeToFramebuffer() {
-    drawablesLock.lock(); fb.lock.lock()
-    defer { fb.lock.unlock(); drawablesLock.unlock() }
+    // Only drawablesLock: the framebuffer is written here and read lock-free by
+    // the Metal display link / snapshot. Taking fb.lock too created a convoy
+    // (display link holds fb.lock -> compositor blocks holding drawablesLock ->
+    // X server draw threads starve), making everything render glacially.
+    drawablesLock.lock()
+    defer { drawablesLock.unlock() }
     let W = fb.w, H = fb.h
     compFrame += 1
     if drawLog && compFrame % 30 == 1 {

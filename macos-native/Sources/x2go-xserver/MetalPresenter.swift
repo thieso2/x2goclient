@@ -50,14 +50,13 @@ final class MetalRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Send
     }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-        // The compositor thread builds `fb`; here we only upload + present so the
-        // display link never holds drawablesLock (which would starve drawing).
-        fb.lock.lock()
+        // The compositor thread builds `fb`; we upload it lock-free (tearing is
+        // harmless for display) so we never contend with the compositor or the
+        // X server's draw threads — that contention made rendering glacial.
         fb.px.withUnsafeBytes { p in
             tex.replace(region: MTLRegionMake2D(0, 0, fb.w, fb.h), mipmapLevel: 0,
                         withBytes: p.baseAddress!, bytesPerRow: fb.w * 4)
         }
-        fb.lock.unlock()
         let drawable = update.drawable
         guard let cmd = queue.makeCommandBuffer() else { return }
         let rp = MTLRenderPassDescriptor()
