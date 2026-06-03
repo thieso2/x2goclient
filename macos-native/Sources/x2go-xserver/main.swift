@@ -184,6 +184,7 @@ func drwCopy(_ src: UInt32, _ dst: UInt32, _ sx: Int, _ sy: Int, _ dx: Int, _ dy
 
 // X event masks we care about
 let ExposureMask: UInt32 = 0x8000
+let VisibilityChangeMask: UInt32 = 0x10000
 let StructureNotifyMask: UInt32 = 0x20000
 
 func pixelToBGRA(_ v: UInt32) -> (UInt8,UInt8,UInt8) {
@@ -341,6 +342,7 @@ func setSeq(_ fd: Int32, _ v: UInt16) { seqLock.lock(); seqMap[fd] = v; seqLock.
 func bumpSeq(_ fd: Int32) -> UInt16 { seqLock.lock(); defer { seqLock.unlock() }; let n = (seqMap[fd] ?? 0) &+ 1; seqMap[fd] = n; return n }
 nonisolated(unsafe) var nextAtom: UInt32 = 1000
 nonisolated(unsafe) var atoms: [String: UInt32] = [:]
+nonisolated(unsafe) var selectionOwners: [UInt32: UInt32] = [:]   // selection atom -> owner window
 
 func reply(_ fd: Int32, lsb: Bool, detail: UInt8 = 0, extra: ([UInt8]) = [], build: (inout ByteWriter) -> Void) {
     var w = ByteWriter(lsb: lsb)
@@ -411,22 +413,13 @@ if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
             injectButton(1, down: false, fx: x, fy: y)
         }
         FileHandle.standardError.write("=== INPUT-BEGIN ===\n".data(using: .utf8)!)
-        // 1) application-menu button (top-left of the panel)
-        clickLeft(12, 11); Thread.sleep(forTimeInterval: 2.0)
-        compDumpStack("appmenu")
-        fb.snapshotPPM(to: "/tmp/x2go_fb_appmenu.ppm")
-        injectKey(macKeyCode: 53, down: true); injectKey(macKeyCode: 53, down: false) // Escape
-        Thread.sleep(forTimeInterval: 0.8)
-        // 2) double-click the Home desktop icon
-        clickLeft(26, 38); Thread.sleep(forTimeInterval: 0.1); clickLeft(26, 38)
-        Thread.sleep(forTimeInterval: 2.5)
-        fb.snapshotPPM(to: "/tmp/x2go_fb_dblclick.ppm")
-        // 3) right-click the desktop centre
-        injectMotion(640, 400); Thread.sleep(forTimeInterval: 0.2)
-        injectButton(3, down: true, fx: 640, fy: 400); Thread.sleep(forTimeInterval: 0.08)
-        injectButton(3, down: false, fx: 640, fy: 400)
-        Thread.sleep(forTimeInterval: 2.0)
-        fb.snapshotPPM(to: "/tmp/x2go_fb_rightclick.ppm")
+        // Click the file-manager dock icon and wait for Thunar to open.
+        clickLeft(762, 775)
+        for s in 0..<8 {
+            Thread.sleep(forTimeInterval: 1.5)
+            compDumpStack("thunar+\(s)")
+            fb.snapshotPPM(to: "/tmp/x2go_fb_thunar\(s).ppm")
+        }
         FileHandle.standardError.write("inputtest: snapshots written\n".data(using: .utf8)!)
     }
 }
@@ -558,8 +551,13 @@ func serveClient(_ cfd: Int32) {
             reply(cfd, lsb: lsb, detail: 1) { $0.u32(0); $0.u16(0); $0.u16(0) }
         case 15: // QueryTree -> root, no parent, 0 children
             reply(cfd, lsb: lsb) { $0.u32(ROOT); $0.u32(0); $0.u16(0); $0.u16(0) }
-        case 23: // GetSelectionOwner -> none
-            reply(cfd, lsb: lsb) { $0.u32(0) }
+        case 22: // SetSelectionOwner: owner, selection, time -> remember owner
+            let owner = r.u32(); let selection = r.u32()
+            selectionOwners[selection] = owner
+        case 23: // GetSelectionOwner: selection -> the remembered owner (else none)
+            let selection = r.u32()
+            let owner = selectionOwners[selection] ?? 0
+            reply(cfd, lsb: lsb) { $0.u32(owner) }
         case 3: // GetWindowAttributes (length 3)
             _ = r.u32()
             var p = ByteWriter(lsb: lsb)
@@ -678,6 +676,12 @@ func serveClient(_ cfd: Int32) {
                     $0.u32(wid); $0.u16(0); $0.u16(0)
                     $0.u16(UInt16(min(win.w, 0xffff))); $0.u16(UInt16(min(win.h, 0xffff))); $0.u16(0)
                 }
+            }
+            // VisibilityNotify(Unobscured): nxagent only renders mirror windows it
+            // believes are visible. Without this, app windows (xterm/file manager)
+            // are created but never drawn — they look like they don't open.
+            if (win.mask & VisibilityChangeMask) != 0 {
+                sendEvent(cfd, lsb: lsb, code: 15) { $0.u32(wid); $0.u8(0) } // state 0 = Unobscured
             }
         case 10: // UnmapWindow: window -> hide (compositor stops drawing it)
             compUnmapWindow(r.u32())
