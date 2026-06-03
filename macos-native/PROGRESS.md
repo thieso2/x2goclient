@@ -127,6 +127,31 @@ capture the exact request/opcode usage, implement core + the RENDER subset
 nxagent uses, push input/Expose events back to nxproxy. Safe-reply unknown
 reply-expecting requests so nxproxy never deadlocks while we expand coverage.
 
+
+## Milestone: real nxproxy session into our native X server
+
+A real X2Go session's **nxproxy connected to our `:77` Swift X server and
+"Established X server connection"**; `x2goruncommand` (startxfce4) ran; nxagent
+pushed initial content (the X11 logo bitmap) via PutImage which our server
+rendered to the framebuffer (docs/e2e-nxproxy-into-xserver.png). End-to-end:
+**x2goagent → nxproxy → our hand-written X server → framebuffer (→ Metal)**,
+no XQuartz.
+
+Implemented to get here: thread-per-client (so the getXDisplay probe can't block
+accept), AllocColor, GetGeometry, QueryPointer, TranslateCoordinates, QueryTree,
+GetSelectionOwner — on top of rung-1/2/3. RENDER reported absent so nxagent uses
+core drawing (PutImage), which we handle.
+
+Open issue (next): after establishing + initial content, the **NX peer link
+(nxproxy↔remote nxagent) breaks** ("Failure reading from the peer proxy") before
+the full XFCE desktop streams. Needs: complete the request/reply coverage
+(GetWindowAttributes len-3, GetImage, ListFonts/QueryFont, colormaps), send
+window/Expose/Map events nxagent expects, and harden the read/write loop so the
+NX stream stays in sync. Then input events (KeyPress/ButtonPress/Motion) → nxproxy.
+
+Status: native endpoint proven at the protocol level (real session connects +
+streams initial content); full desktop streaming is the remaining work.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**

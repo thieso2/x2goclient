@@ -301,6 +301,26 @@ func serveClient(_ cfd: Int32) {
         case 119: // GetModifierMapping -> 2 keycodes/modifier, all 0
             let extra = [UInt8](repeating: 0, count: 8 * 2)
             reply(cfd, lsb: lsb, detail: 2, extra: extra) { _ in }
+        case 84: // AllocColor -> echo for TrueColor
+            _ = r.u32() /*cmap*/
+            let rd = r.u16(), gn = r.u16(), bl = r.u16()
+            let pixel = (UInt32(rd >> 8) << 16) | (UInt32(gn >> 8) << 8) | UInt32(bl >> 8)
+            reply(cfd, lsb: lsb) { $0.u16(rd); $0.u16(gn); $0.u16(bl); $0.u16(0); $0.u32(pixel) }
+        case 14: // GetGeometry -> root geometry, depth 24
+            reply(cfd, lsb: lsb, detail: 24) {
+                $0.u32(ROOT); $0.u16(0); $0.u16(0)
+                $0.u16(UInt16(fb.w)); $0.u16(UInt16(fb.h)); $0.u16(0)
+            }
+        case 38: // QueryPointer -> pointer at 0,0 on root
+            reply(cfd, lsb: lsb, detail: 1 /*same-screen*/) {
+                $0.u32(ROOT); $0.u32(0); $0.u16(0); $0.u16(0); $0.u16(0); $0.u16(0); $0.u16(0)
+            }
+        case 40: // TranslateCoordinates -> identity
+            reply(cfd, lsb: lsb, detail: 1) { $0.u32(0); $0.u16(0); $0.u16(0) }
+        case 15: // QueryTree -> root, no parent, 0 children
+            reply(cfd, lsb: lsb) { $0.u32(ROOT); $0.u32(0); $0.u16(0); $0.u16(0) }
+        case 23: // GetSelectionOwner -> none
+            reply(cfd, lsb: lsb) { $0.u32(0) }
 
         case 55: // CreateGC: cid, drawable, value-mask, values
             let cid = r.u32(); _ = r.u32(); let mask = r.u32()
