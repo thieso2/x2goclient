@@ -397,10 +397,17 @@ before each run.
   (nxagent skips drawing windows it thinks are obscured — without it app windows
   were created but never drawn); SetSelectionOwner/GetSelectionOwner tracking
   (apps were spinning re-claiming the selection).
-- 🔜 Remaining polish: GTK/Qt window **content fidelity** (window frames appear
-  but interior is currently sparse for some apps — more RENDER draw-op coverage
-  needed); old-style primitives (PolyArc/PolyText/PolyLine); alpha-blended ARGB
-  compositing; incremental damage updates.
+- ✅ **App window content renders**: GTK apps draw their UI into an off-screen
+  pixmap then CopyArea it to the window; the window showed dark because the WM
+  decoration frame composited over the content child and its undrawn centre was
+  blitted as opaque black. Fixed by skipping undrawn (alpha-0) pixels in the
+  compositor. Glyph text uses the real pen colour (visible on dark and light
+  backgrounds). Verified: mousepad renders its full UI (menu bar, text area,
+  cursor); the terminal renders its window/background.
+- 🔜 Remaining polish: old-style primitives (PolyArc for xclock, PolyText/
+  PolyLine); alpha-blended ARGB compositing for shadows/rounded corners;
+  incremental damage updates instead of full-frame recomposite; some apps
+  (Thunar) open in daemon mode without a browser window (server-side behaviour).
 
 ## Key finding
 
