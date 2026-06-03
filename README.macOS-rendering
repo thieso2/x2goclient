@@ -1,0 +1,119 @@
+X2Go on macOS — black window interiors and rendering artifacts
+===============================================================
+
+Symptom
+-------
+
+On macOS (X2Go Client + XQuartz), a connected session shows:
+
+  * the desktop wallpaper and window *decorations* (title bars, borders) render
+    correctly, but
+  * window *interiors* are solid black (terminals, file managers, app content),
+    and
+  * moving or raising a window leaves cascading black "trails"/ghost rectangles
+    that are never repainted.
+
+This is a long-standing, well-known issue when displaying X2Go/NX sessions
+through XQuartz. It is NOT a bug in the session applications and it is NOT the
+"could not connect / no window" problem.
+
+
+Root cause
+----------
+
+Two independent factors combine:
+
+1. Remote window-manager compositing (the main cause).
+   Modern desktop window managers (XFCE's xfwm4, KDE's KWin, MATE's Marco with
+   compositing, GNOME/mutter, Compiz, ...) run a built-in compositor that
+   redirects every window to an off-screen pixmap and composites them on screen
+   using the X Composite + RENDER extensions.
+
+   That compositing path does not survive the round trip
+
+       desktop apps  ->  x2goagent (nxagent)  ->  nxproxy  ->  XQuartz
+
+   so the composited window contents arrive as black, and damage/expose
+   tracking for moved windows is lost (hence the trails).
+
+2. XQuartz 2.8.5 expose regression (secondary).
+   XQuartz 2.8.5 (beta3 and later) regressed expose-event handling on resize:
+   newly exposed areas are not redrawn. XQuartz 2.8.4 was the last good
+   release. This adds resize/move artifacts on top of factor 1, independently
+   of X2Go.
+   See: https://github.com/XQuartz/XQuartz/issues/309
+
+
+The fix
+-------
+
+Disable the *remote* desktop's compositor (server side, inside the session).
+This is the actual fix and is confirmed to make window interiors and window
+moves render correctly.
+
+XFCE (xfwm4):
+
+    xfconf-query -c xfwm4 -p /general/use_compositing -s false
+
+  or, in the GUI:
+    Settings -> Window Manager Tweaks -> Compositor ->
+    uncheck "Enable display compositing"
+
+  or persistently (no running session required), in
+  ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml on the X2Go server:
+
+    <property name="use_compositing" type="bool" value="false"/>
+
+Other desktops:
+  * MATE:   gsettings set org.mate.Marco.general compositing-manager false
+  * KDE:    System Settings -> Display -> Compositor -> disable, or run the
+            session with compositing off.
+  * GNOME:  use a non-compositing / "classic" or fallback session where
+            available.
+
+To apply this for every user of an X2Go server, set the equivalent default
+system-wide (e.g. an xfwm4 default in /etc/xdg/xfce4/...).
+
+If resize artifacts persist after disabling remote compositing, you are hitting
+factor 2 — downgrade XQuartz from 2.8.5 to 2.8.4.
+
+
+What NOT to do
+--------------
+
+Do not disable the RENDER extension on XQuartz:
+
+    defaults write org.xquartz.X11 enable_render_extension 0   # DO NOT (for X2Go)
+
+This is a popular fix for *direct* X11/Java apps on Apple Silicon
+(see https://www.technomancer.com/archives/663), but it breaks X2Go: nxproxy
+*replays* the session's RENDER operations onto the local XQuartz server, so
+removing RENDER there tears down the proxy with:
+
+    Error: Failure reading from the peer proxy.
+    Loop: PANIC! No shutdown of proxy link performed by remote proxy.
+    Error: Connection with remote peer broken.
+
+
+How to verify rendering (screenshots look black even when it works)
+-------------------------------------------------------------------
+
+macOS `screencapture` cannot grab XQuartz windows without Screen-Recording
+permission, so a working session can still *look* black in a screenshot. Read
+the real pixels straight from the X server instead:
+
+    DISPLAY=:0 xwd -name "X2GO-<session-name>" -out /tmp/win.xwd
+    xwdtopnm /tmp/win.xwd | pnmtopng > /tmp/win.png     # netpbm
+    open /tmp/win.png
+
+(`xlsclients` on :0 shows the running session's window name.)
+
+
+References
+----------
+
+  * https://github.com/XQuartz/XQuartz/issues/309   (XQuartz 2.8.5 expose regression)
+  * https://bugs.x2go.org/cgi-bin/bugreport.cgi?bug=1541   (graphics issue, macOS Big Sur)
+  * https://bugs.x2go.org/cgi-bin/bugreport.cgi?bug=1582   (app rendering issue, macOS)
+  * https://github.com/ArcticaProject/nx-libs/issues/161   (nxagent flicker/segfault on maximize)
+  * https://www.technomancer.com/archives/663   (RENDER-extension fix — for direct X11, NOT X2Go)
