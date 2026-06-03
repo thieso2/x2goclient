@@ -115,6 +115,18 @@ sufficient for nxagent/nxproxy, proven rung-by-rung against real X clients.
       subset nxagent uses, more core requests (CreatePixmap/CopyArea/PolyText),
       and input events back to nxproxy. Architecture + display path proven.
 
+
+## Full protocol + events (drive a real session) — in progress
+
+Goal escalated: make it a *fully working* native macOS/Metal client — implement
+the X protocol + event handling our endpoint needs so a real nxproxy session
+renders into the Metal window, with input.
+
+Approach (data-driven): point a real session's nxproxy at our `:77` server,
+capture the exact request/opcode usage, implement core + the RENDER subset
+nxagent uses, push input/Expose events back to nxproxy. Safe-reply unknown
+reply-expecting requests so nxproxy never deadlocks while we expand coverage.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
