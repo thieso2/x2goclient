@@ -71,6 +71,13 @@ X2Go session (server) ──NX──▶ nxproxy ──▶ X display  ──CX11(
 - [ ] Replace capture bridge with native NX/X decode → zero X11 (Phase 3 core)
 - [ ] Metal 4 niceties / MetalFX upscaling (stretch)
 
+  - Input auto-validation is **doubly blocked in this environment**: (a) XQuartz
+    2.8.5 has no XTEST (so the app's X injection can't synthesize real events),
+    and (b) the harness has no Accessibility permission (so CGEvent/System-Events
+    injection is denied too). Both are environmental, not code defects. Reliable
+    input needs either XQuartz 2.8.4 (has XTEST) or — properly — the native
+    protocol endpoint.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
