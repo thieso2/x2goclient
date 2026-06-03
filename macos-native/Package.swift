@@ -32,6 +32,9 @@ let package = Package(
                 ])
             ]
         ),
+        // Native NX endpoint: a minimal X11 server nxproxy connects to.
+        .executableTarget(name: "x2go-xserver"),
+
         // Headless e2e check of the input bridge (same CX11 calls the GUI uses).
         .executableTarget(
             name: "inputtest",
