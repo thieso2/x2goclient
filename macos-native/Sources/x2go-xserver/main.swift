@@ -88,9 +88,89 @@ final class Framebuffer: @unchecked Sendable {
     }
 }
 
+// Off-screen drawable. Apps render content here then CopyArea/Composite it onto
+// a window, so a pixmap must be a real readable/writable BGRA buffer.
+final class Pixmap: @unchecked Sendable {
+    let w: Int, h: Int
+    var px: [UInt8]
+    init(_ w: Int, _ h: Int) { self.w = max(1, w); self.h = max(1, h); px = [UInt8](repeating: 0, count: self.w * self.h * 4) }
+}
+
 nonisolated(unsafe) let fb = Framebuffer(1280, 800)
 nonisolated(unsafe) var gcForeground: [UInt32: (UInt8,UInt8,UInt8)] = [:]
 nonisolated(unsafe) var windows: [UInt32: (x: Int, y: Int, w: Int, h: Int, mask: UInt32)] = [:]
+nonisolated(unsafe) var winParent: [UInt32: UInt32] = [:]
+nonisolated(unsafe) var pixmaps: [UInt32: Pixmap] = [:]
+nonisolated(unsafe) var pictures: [UInt32: UInt32] = [:]   // RENDER Picture id -> drawable id
+let drawablesLock = NSLock()
+nonisolated(unsafe) let drawLog = ProcessInfo.processInfo.environment["X2GO_DRAWLOG"] != nil
+nonisolated(unsafe) var drawLogN = 0
+func dlog(_ s: @autoclosure () -> String) {
+    if drawLog && drawLogN < 120 { drawLogN += 1; FileHandle.standardError.write("  \(s())\n".data(using: .utf8)!) }
+}
+func drwKind(_ d: UInt32) -> String {
+    if pixmaps[d] != nil { return "pixmap" }
+    if d == ROOT { return "ROOT" }
+    if let w = windows[d] { let (ox,oy) = winAbsOrigin(d); return "win@(\(ox),\(oy))[\(w.w)x\(w.h)]" }
+    return "unknown(0,0)"
+}
+
+/// Absolute on-screen origin of a window, walking the parent chain.
+func winAbsOrigin(_ d: UInt32) -> (Int, Int) {
+    var ox = 0, oy = 0, cur = d, guardN = 0
+    while cur != ROOT, let win = windows[cur], guardN < 64 {
+        ox += win.x; oy += win.y; cur = winParent[cur] ?? ROOT; guardN += 1
+    }
+    return (ox, oy)
+}
+
+/// Read a pixel (BGRA) from any drawable, applying the window origin for windows.
+@inline(__always) func drwGet(_ d: UInt32, _ x: Int, _ y: Int) -> (UInt8,UInt8,UInt8,UInt8) {
+    if let pm = pixmaps[d] {
+        if x < 0 || y < 0 || x >= pm.w || y >= pm.h { return (0,0,0,0) }
+        let o = (y * pm.w + x) * 4; return (pm.px[o], pm.px[o+1], pm.px[o+2], pm.px[o+3])
+    }
+    let (ox, oy) = winAbsOrigin(d); let ax = ox + x, ay = oy + y
+    if ax < 0 || ay < 0 || ax >= fb.w || ay >= fb.h { return (0,0,0,0) }
+    let o = (ay * fb.w + ax) * 4; return (fb.px[o], fb.px[o+1], fb.px[o+2], fb.px[o+3])
+}
+@inline(__always) func drwSet(_ d: UInt32, _ x: Int, _ y: Int, _ c: (UInt8,UInt8,UInt8,UInt8)) {
+    if let pm = pixmaps[d] {
+        if x < 0 || y < 0 || x >= pm.w || y >= pm.h { return }
+        let o = (y * pm.w + x) * 4; pm.px[o] = c.0; pm.px[o+1] = c.1; pm.px[o+2] = c.2; pm.px[o+3] = c.3
+        return
+    }
+    let (ox, oy) = winAbsOrigin(d); let ax = ox + x, ay = oy + y
+    if ax < 0 || ay < 0 || ax >= fb.w || ay >= fb.h { return }
+    let o = (ay * fb.w + ax) * 4; fb.px[o] = c.0; fb.px[o+1] = c.1; fb.px[o+2] = c.2; fb.px[o+3] = 0xff
+}
+func drwFill(_ d: UInt32, _ x: Int, _ y: Int, _ rw: Int, _ rh: Int, _ bgra: (UInt8,UInt8,UInt8)) {
+    drawablesLock.lock(); defer { drawablesLock.unlock() }
+    if pixmaps[d] == nil { // window/screen path -> straight to framebuffer (locks itself)
+        let (ox, oy) = winAbsOrigin(d); fb.fillRect(ox + x, oy + y, rw, rh, bgra); return
+    }
+    for yy in y..<(y+rh) { for xx in x..<(x+rw) { drwSet(d, xx, yy, (bgra.0, bgra.1, bgra.2, 0xff)) } }
+}
+func drwPutImageZ(_ d: UInt32, _ x: Int, _ y: Int, _ iw: Int, _ ih: Int, _ data: ArraySlice<UInt8>) {
+    if pixmaps[d] == nil { let (ox, oy) = winAbsOrigin(d); fb.putImageZ(ox + x, oy + y, iw, ih, data); return }
+    drawablesLock.lock(); defer { drawablesLock.unlock() }
+    let bpr = iw * 4; let base = data.startIndex
+    for ry in 0..<ih { for rx in 0..<iw {
+        let so = base + ry * bpr + rx * 4
+        if so + 3 >= data.endIndex { continue }
+        drwSet(d, x + rx, y + ry, (data[so], data[so+1], data[so+2], 0xff))
+    } }
+}
+/// CopyArea/Composite: move a rectangle of pixels between any two drawables.
+func drwCopy(_ src: UInt32, _ dst: UInt32, _ sx: Int, _ sy: Int, _ dx: Int, _ dy: Int, _ cw: Int, _ ch: Int) {
+    fb.lock.lock(); drawablesLock.lock()
+    defer { drawablesLock.unlock(); fb.lock.unlock() }
+    for ry in 0..<ch { for rx in 0..<cw {
+        let p = drwGet(src, sx + rx, sy + ry)
+        if p.3 == 0 && pixmaps[src] != nil { continue }   // skip fully-transparent source px
+        drwSet(dst, dx + rx, dy + ry, (p.0, p.1, p.2, 0xff))
+    } }
+}
 
 // X event masks we care about
 let ExposureMask: UInt32 = 0x8000
@@ -448,15 +528,53 @@ func serveClient(_ cfd: Int32) {
             replyRaw(cfd, lsb: lsb, detail: 0, [0,0,0,0,0,0])
         case 117: // GetPointerMapping -> 3 buttons
             replyRaw(cfd, lsb: lsb, detail: 3, [1, 2, 3])
+        case 91: // QueryColors: cmap, pixels[] -> derive RGB from pixel (TrueColor)
+            _ = r.u32()
+            let n = (body.count - 4) / 4
+            var p = ByteWriter(lsb: lsb)
+            p.u16(UInt16(max(0, n))); p.pad(22)
+            for _ in 0..<max(0, n) {
+                let pix = r.u32()
+                let rd = UInt16((pix >> 16) & 0xff), gn = UInt16((pix >> 8) & 0xff), bl = UInt16(pix & 0xff)
+                p.u16(rd << 8 | rd); p.u16(gn << 8 | gn); p.u16(bl << 8 | bl); p.u16(0)
+            }
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
+
+        case 45: // OpenFont: fid, name-len, pad, name -> accept (track nothing)
+            break
+        case 47: // QueryFont -> minimal fixed 6x13 monospace (allCharsExist, no per-char info)
+            var p = ByteWriter(lsb: lsb)
+            func charinfo() { p.u16(0); p.u16(6); p.u16(6); p.u16(11); p.u16(2); p.u16(0) } // l,r,width,asc,desc,attr
+            charinfo(); p.pad(4)            // minBounds
+            charinfo(); p.pad(4)            // maxBounds
+            p.u16(0); p.u16(255)            // min/max CharOrByte2
+            p.u16(0)                        // defaultChar
+            p.u16(0)                        // numFontProps
+            p.u8(0); p.u8(0); p.u8(0); p.u8(1) // drawDir, minByte1, maxByte1, allCharsExist
+            p.u16(11); p.u16(2)             // fontAscent, fontDescent
+            p.u32(0)                        // numCharInfos
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
+        case 48: // QueryTextExtents -> width = 6px per char
+            let nchars = max(0, (body.count) / 2)
+            var p = ByteWriter(lsb: lsb)
+            p.u16(11); p.u16(2); p.u16(11); p.u16(2)               // font asc/desc, overall asc/desc
+            p.u32(UInt32(nchars * 6)); p.u32(0); p.u32(UInt32(nchars * 6)) // width, left, right
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
+        case 49: // ListFonts -> advertise the core fonts nxagent expects
+            let names = ["fixed", "cursor"]
+            var p = ByteWriter(lsb: lsb)
+            p.u16(UInt16(names.count)); p.pad(22)
+            for n in names { let b = Array(n.utf8); p.u8(UInt8(b.count)); p.raw(b) }
+            replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
 
         case 1: // CreateWindow: depth(detail), wid, parent, x,y,w,h, border, class, visual, mask, values
-            let wid = r.u32(); _ = r.u32()
+            let wid = r.u32(); let parent = r.u32()
             let x = si16(r.u16()), y = si16(r.u16())
             let ww = Int(r.u16()), hh = Int(r.u16())
             _ = r.u16() /*border*/; _ = r.u16() /*class*/; _ = r.u32() /*visual*/
             let mask = r.u32()
             let em = valueFor(&r, mask: mask, bit: 0x800) ?? 0   // CWEventMask
-            windows[wid] = (x, y, ww, hh, em)
+            windows[wid] = (x, y, ww, hh, em); winParent[wid] = parent
         case 2: // ChangeWindowAttributes: window, value-mask, values
             let wid = r.u32(); let mask = r.u32()
             if let em = valueFor(&r, mask: mask, bit: 0x800) {
@@ -481,27 +599,41 @@ func serveClient(_ cfd: Int32) {
         case 56: // ChangeGC: gc, value-mask, values
             let gc = r.u32(); let mask = r.u32()
             if let fg = foregroundFrom(&r, mask: mask) { gcForeground[gc] = fg }
+        case 53: // CreatePixmap: depth(detail), pid, drawable, w, h
+            let pid = r.u32(); _ = r.u32()
+            let pw = Int(r.u16()), ph = Int(r.u16())
+            drawablesLock.lock(); pixmaps[pid] = Pixmap(pw, ph); drawablesLock.unlock()
+        case 54: // FreePixmap: pixmap
+            let pid = r.u32(); drawablesLock.lock(); pixmaps[pid] = nil; drawablesLock.unlock()
+        case 62: // CopyArea: src, dst, gc, src-x, src-y, dst-x, dst-y, w, h
+            let src = r.u32(); let dst = r.u32(); _ = r.u32()
+            let sx = si16(r.u16()), sy = si16(r.u16())
+            let dx = si16(r.u16()), dy = si16(r.u16())
+            let cw = Int(r.u16()), ch = Int(r.u16())
+            dlog("CopyArea \(drwKind(src)) -> \(drwKind(dst)) src(\(sx),\(sy)) dst(\(dx),\(dy)) \(cw)x\(ch)")
+            if cw > 0, ch > 0 { drwCopy(src, dst, sx, sy, dx, dy, cw, ch) }
         case 70: // PolyFillRectangle: drawable, gc, rects[x,y,w,h]
-            _ = r.u32(); let gc = r.u32()
+            let drw = r.u32(); let gc = r.u32()
             let fg = gcForeground[gc] ?? (0xc0, 0xc0, 0xc0)
             let n = (body.count - 8) / 8
             for _ in 0..<max(0, n) {
                 let x = si16(r.u16()), y = si16(r.u16())
                 let rw = Int(r.u16()), rh = Int(r.u16())
-                fb.fillRect(x, y, rw, rh, fg)
+                drwFill(drw, x, y, rw, rh, fg)
             }
-        case 61: // ClearArea: window, x, y, w, h
-            _ = r.u32(); let x = si16(r.u16()), y = si16(r.u16())
+        case 61: // ClearArea: window, x, y, w, h -> paint window background
+            let drw = r.u32(); let x = si16(r.u16()), y = si16(r.u16())
             var rw = Int(r.u16()), rh = Int(r.u16())
-            if rw == 0 { rw = fb.w }; if rh == 0 { rh = fb.h }
-            fb.fillRect(x, y, rw, rh, (0x30, 0x28, 0x20))
+            if rw == 0 { rw = windows[drw]?.w ?? fb.w }; if rh == 0 { rh = windows[drw]?.h ?? fb.h }
+            drwFill(drw, x, y, rw, rh, (0x30, 0x28, 0x20))
         case 72: // PutImage: format(detail), drawable, gc, w,h, dstx,dsty, left-pad, depth, pad2, data
             let format = detail
-            _ = r.u32(); _ = r.u32()
+            let drw = r.u32(); _ = r.u32()
             let iw = Int(r.u16()), ih = Int(r.u16())
             let dx = si16(r.u16()), dy = si16(r.u16())
             if format == 2, iw > 0, ih > 0, body.count >= 20 {   // ZPixmap
-                fb.putImageZ(dx, dy, iw, ih, body[20...])
+                dlog("PutImage -> \(drwKind(drw)) at(\(dx),\(dy)) \(iw)x\(ih)")
+                drwPutImageZ(drw, dx, dy, iw, ih, body[20...])
             }
 
         case RENDER_OP: // RENDER extension — minor opcode is in `detail`
@@ -529,8 +661,37 @@ func serveClient(_ cfd: Int32) {
                 replyRaw(cfd, lsb: lsb, detail: 0, pf.bytes)
             case 2: // RenderQueryPictIndexValues -> none
                 reply(cfd, lsb: lsb) { $0.u32(0) }
+            case 4: // CreatePicture: pid, drawable, format, mask, values...
+                let pid = r.u32(); let drw = r.u32()
+                drawablesLock.lock(); pictures[pid] = drw; drawablesLock.unlock()
+            case 7: // FreePicture: pid
+                let pid = r.u32(); drawablesLock.lock(); pictures[pid] = nil; drawablesLock.unlock()
+            case 8: // Composite: op, src, mask, dst, src/mask/dst coords, w, h
+                _ = r.u8(); r.skip(3)
+                let srcP = r.u32(); _ = r.u32(); let dstP = r.u32()
+                let sx = si16(r.u16()), sy = si16(r.u16())
+                _ = r.u16(); _ = r.u16()                 // mask x,y
+                let dx = si16(r.u16()), dy = si16(r.u16())
+                let cw = Int(r.u16()), ch = Int(r.u16())
+                dlog("Composite src-pict=\(srcP)->\(pictures[srcP].map(drwKind) ?? "?") dst-pict=\(dstP)->\(pictures[dstP].map(drwKind) ?? "?") src(\(sx),\(sy)) dst(\(dx),\(dy)) \(cw)x\(ch)")
+                if let s = pictures[srcP], let d = pictures[dstP], cw > 0, ch > 0 {
+                    drwCopy(s, d, sx, sy, dx, dy, cw, ch)
+                }
+            case 26: // FillRectangles: op, pad, dst, color(r,g,b,a u16), rects[x,y,w,h]
+                _ = r.u8(); r.skip(3)
+                let dstP = r.u32()
+                let rd = r.u16(), gn = r.u16(), bl = r.u16(); _ = r.u16()
+                let col: (UInt8,UInt8,UInt8) = (UInt8(bl >> 8), UInt8(gn >> 8), UInt8(rd >> 8))
+                if let d = pictures[dstP] {
+                    let n = (body.count - 12) / 8
+                    for _ in 0..<max(0, n) {
+                        let x = si16(r.u16()), y = si16(r.u16())
+                        let rw = Int(r.u16()), rh = Int(r.u16())
+                        drwFill(d, x, y, rw, rh, col)
+                    }
+                }
             default:
-                break // CreatePicture/Composite/CompositeGlyphs/etc.: accept, no reply
+                break // CompositeGlyphs/Trapezoids/etc.: accept, no reply (text not yet rasterized)
             }
 
         default:
@@ -544,8 +705,12 @@ func serveClient(_ cfd: Int32) {
     }
     let summary = unknown.sorted { $0.value > $1.value }.prefix(12)
         .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
+    var allHist: [UInt8: Int] = [:]
+    for rq in reqOrder { allHist[rq.0, default: 0] += 1 }
+    let full = allHist.sorted { $0.value > $1.value }
+        .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
     let tail = reqOrder.suffix(30).map { "op\($0.0)/d\($0.1)/l\($0.2)" }.joined(separator: " ")
-    FileHandle.standardError.write("client disconnected. total=\(reqOrder.count) unhandled: \(summary)\nLAST30: \(tail)\n".data(using: .utf8)!)
+    FileHandle.standardError.write("client disconnected. total=\(reqOrder.count) unhandled: \(summary)\nALL: \(full)\nLAST30: \(tail)\n".data(using: .utf8)!)
     q.close()
     outQueuesLock.lock(); outQueues[cfd] = nil; outQueuesLock.unlock()
     close(cfd)
