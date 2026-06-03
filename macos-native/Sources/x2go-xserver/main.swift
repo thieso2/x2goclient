@@ -87,6 +87,11 @@ final class Framebuffer: @unchecked Sendable {
 
 nonisolated(unsafe) let fb = Framebuffer(1280, 800)
 nonisolated(unsafe) var gcForeground: [UInt32: (UInt8,UInt8,UInt8)] = [:]
+nonisolated(unsafe) var windows: [UInt32: (x: Int, y: Int, w: Int, h: Int, mask: UInt32)] = [:]
+
+// X event masks we care about
+let ExposureMask: UInt32 = 0x8000
+let StructureNotifyMask: UInt32 = 0x20000
 
 func pixelToBGRA(_ v: UInt32) -> (UInt8,UInt8,UInt8) {
     (UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff))
@@ -228,6 +233,26 @@ Thread.detachNewThread {
 }
 
 func si16(_ v: UInt16) -> Int { Int(Int16(bitPattern: v)) }
+
+// Extract one value (by its mask bit) from a value-mask + value list.
+func valueFor(_ r: inout ByteReader, mask: UInt32, bit: UInt32) -> UInt32? {
+    let total = (0..<32).reduce(0) { $0 + (((mask >> $1) & 1) != 0 ? 1 : 0) }
+    var vals: [UInt32] = []; vals.reserveCapacity(total)
+    for _ in 0..<total { vals.append(r.u32()) }
+    guard (mask & bit) != 0 else { return nil }
+    var idx = 0; var b: UInt32 = 1
+    while b < bit { if (mask & b) != 0 { idx += 1 }; b <<= 1 }
+    return idx < vals.count ? vals[idx] : nil
+}
+
+// Send a 32-byte event to the client.
+func sendEvent(_ fd: Int32, lsb: Bool, code: UInt8, build: (inout ByteWriter) -> Void) {
+    var w = ByteWriter(lsb: lsb)
+    w.u8(code); w.u8(0); w.u16(seq)
+    build(&w)
+    while w.bytes.count < 32 { w.u8(0) }
+    writeAll(fd, w.bytes)
+}
 // Extract the GCForeground (bit 0x4) value from a value-mask + value list.
 func foregroundFrom(_ r: inout ByteReader, mask: UInt32) -> (UInt8,UInt8,UInt8)? {
     guard (mask & 0x4) != 0 else {
@@ -293,11 +318,13 @@ func serveClient(_ cfd: Int32) {
         case 97: // QueryBestSize -> echo requested size
             _ = r.u32() /*drawable*/; let bw = r.u16(); let bh = r.u16()
             reply(cfd, lsb: lsb) { $0.u16(bw); $0.u16(bh) }
-        case 101: // GetKeyboardMapping -> 1 keysym/keycode, all NoSymbol
-            let count = Int(detail) // detail isn't count here; body has first+count
-            _ = count
-            let extra = [UInt8](repeating: 0, count: 4)
-            reply(cfd, lsb: lsb, detail: 1, extra: extra) { _ in }
+        case 101: // GetKeyboardMapping: body = first-keycode, count, pad
+            let first = r.u8(); let count = Int(r.u8()); _ = first
+            let kpkc = 1                       // keysyms per keycode
+            // reply must contain count*kpkc keysyms (4 bytes each), else nxagent
+            // mis-frames its keymap. NoSymbol(0) for now (display path).
+            let extra = [UInt8](repeating: 0, count: max(0, count) * kpkc * 4)
+            reply(cfd, lsb: lsb, detail: UInt8(kpkc), extra: extra) { _ in }
         case 119: // GetModifierMapping -> 2 keycodes/modifier, all 0
             let extra = [UInt8](repeating: 0, count: 8 * 2)
             reply(cfd, lsb: lsb, detail: 2, extra: extra) { _ in }
@@ -321,6 +348,32 @@ func serveClient(_ cfd: Int32) {
             reply(cfd, lsb: lsb) { $0.u32(ROOT); $0.u32(0); $0.u16(0); $0.u16(0) }
         case 23: // GetSelectionOwner -> none
             reply(cfd, lsb: lsb) { $0.u32(0) }
+
+        case 1: // CreateWindow: depth(detail), wid, parent, x,y,w,h, border, class, visual, mask, values
+            let wid = r.u32(); _ = r.u32()
+            let x = si16(r.u16()), y = si16(r.u16())
+            let ww = Int(r.u16()), hh = Int(r.u16())
+            _ = r.u16() /*border*/; _ = r.u16() /*class*/; _ = r.u32() /*visual*/
+            let mask = r.u32()
+            let em = valueFor(&r, mask: mask, bit: 0x800) ?? 0   // CWEventMask
+            windows[wid] = (x, y, ww, hh, em)
+        case 2: // ChangeWindowAttributes: window, value-mask, values
+            let wid = r.u32(); let mask = r.u32()
+            if let em = valueFor(&r, mask: mask, bit: 0x800) {
+                var win = windows[wid] ?? (0, 0, fb.w, fb.h, 0); win.mask = em; windows[wid] = win
+            }
+        case 8: // MapWindow: window -> deliver MapNotify + Expose if selected
+            let wid = r.u32()
+            let win = windows[wid] ?? (0, 0, fb.w, fb.h, StructureNotifyMask | ExposureMask)
+            if (win.mask & StructureNotifyMask) != 0 {
+                sendEvent(cfd, lsb: lsb, code: 19) { $0.u32(wid); $0.u32(wid); $0.u8(0) } // MapNotify
+            }
+            if (win.mask & ExposureMask) != 0 {
+                sendEvent(cfd, lsb: lsb, code: 12) {   // Expose (full window, count 0)
+                    $0.u32(wid); $0.u16(0); $0.u16(0)
+                    $0.u16(UInt16(min(win.w, 0xffff))); $0.u16(UInt16(min(win.h, 0xffff))); $0.u16(0)
+                }
+            }
 
         case 55: // CreateGC: cid, drawable, value-mask, values
             let cid = r.u32(); _ = r.u32(); let mask = r.u32()

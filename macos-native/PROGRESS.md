@@ -187,6 +187,38 @@ lacks XTEST). That path is "fully working display today, input via XQuartz 2.8.4
 or the native endpoint". The native endpoint here is the cleaner long-term
 no-X11 architecture, still being completed.
 
+
+## Diagnosis update — NX tunnel teardown (the blocker)
+
+Implemented since last note: fixed GetKeyboardMapping (return count*kpkc keysyms),
+added AllocColor/GetGeometry/QueryPointer/TranslateCoordinates/QueryTree/
+GetSelectionOwner, and **event handling**: track windows (CreateWindow/
+ChangeWindowAttributes event-mask) and deliver **MapNotify + Expose** on MapWindow.
+
+Discriminating test (same server, same moment):
+- via **XQuartz**: full XFCE session, 3 desktop procs, **no break** — session,
+  tunnel and nxagent are healthy.
+- via **our :77 server**: nxproxy "Establishes", we answer every request
+  (incl. the atom-intern flood) and send Map/Expose events, but **~2s later the
+  NX peer link drops** ("Failure reading from the peer proxy"; "No shutdown of
+  proxy link performed by remote proxy"). Server-side nxagent log shows it
+  started cleanly ("Screen resized to 1280x800") — **no crash logged**; our X
+  server also survives (logs the disconnect).
+
+So nxagent is healthy and our server is healthy, yet the nxproxy↔nxagent tunnel
+tears down only on our path, ~2s in. Root cause not yet pinpointed; it is a
+protocol-conformance/timing gap that makes nxproxy (or the client's session
+monitor) abandon the link — needs **NX-level tracing** (nxproxy debug log) to
+isolate. This is the remaining blocker to a full desktop via the native endpoint.
+
+### Bottom line
+The native NX endpoint is proven at the protocol level (real session connects,
+establishes, streams initial content → Metal, no XQuartz) but is **not yet a
+fully working desktop client** — the NX-tunnel teardown is an open,
+deeper-investigation item. The **capture-bridge** path already renders the full
+live XFCE desktop in Metal today (docs/e2e-native-metal.png); its only gap is
+input (XTEST on XQuartz 2.8.5).
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
