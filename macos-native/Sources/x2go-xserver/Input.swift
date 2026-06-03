@@ -155,8 +155,12 @@ func injectMotion(_ fx: Int, _ fy: Int) {
 
 func injectButton(_ button: UInt8, down: Bool, fx: Int, fy: Int) {
     let mask: UInt16 = button == 1 ? Button1Mask : button == 2 ? Button2Mask : button == 3 ? Button3Mask : 0
+    // Always move the pointer to the click first: a lone ButtonPress does not
+    // reposition nxagent's sprite, so the click would land at the last (often
+    // 0,0) position. A preceding MotionNotify fixes "clicks do nothing".
+    inputLock.lock(); ptrX = fx; ptrY = fy; let s0 = modState | btnState; inputLock.unlock()
+    sendInputEvent(6 /*MotionNotify*/, 0, s0)
     inputLock.lock()
-    ptrX = fx; ptrY = fy
     let before = modState | btnState
     if down { btnState |= mask } else { btnState &= ~mask }
     inputLock.unlock()

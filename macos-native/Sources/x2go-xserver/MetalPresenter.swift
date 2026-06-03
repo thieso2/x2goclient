@@ -82,7 +82,7 @@ final class FBView: NSView {
         return (max(0, min(fb.w - 1, fx)), max(0, min(fb.h - 1, fy)))
     }
 
-    override func mouseMoved(with e: NSEvent)        { let (x, y) = fbPoint(e); injectMotion(x, y) }
+    override func mouseMoved(with e: NSEvent)        { let (x, y) = fbPoint(e); il("mouseMoved -> fb(\(x),\(y))"); injectMotion(x, y) }
     override func mouseDragged(with e: NSEvent)      { let (x, y) = fbPoint(e); injectMotion(x, y) }
     override func rightMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
     override func otherMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
