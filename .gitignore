@@ -38,3 +38,6 @@ x2goclient.pro.user
 
 # This file.
 .gitignore
+
+# Swift native build
+macos-native/.build/
