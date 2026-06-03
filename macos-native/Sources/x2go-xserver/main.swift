@@ -235,7 +235,17 @@ func sendSetup(_ fd: Int32, lsb: Bool) {
 
 // MARK: - replies
 
-nonisolated(unsafe) var seq: UInt16 = 0
+// Per-connection X11 sequence numbers. MUST be per-fd: multiple clients
+// (nxproxy main + auxiliary + the client's xmodmap probes) run concurrently on
+// their own threads, and a shared counter corrupts each connection's reply
+// sequence numbers — which makes nxproxy unable to match replies to requests and
+// stop relaying them to nxagent.
+nonisolated(unsafe) var seqMap: [Int32: UInt16] = [:]
+let seqLock = NSLock()
+func curSeq(_ fd: Int32) -> UInt16 { seqLock.lock(); defer { seqLock.unlock() }; return seqMap[fd] ?? 0 }
+func setSeq(_ fd: Int32, _ v: UInt16) { seqLock.lock(); seqMap[fd] = v; seqLock.unlock() }
+@discardableResult
+func bumpSeq(_ fd: Int32) -> UInt16 { seqLock.lock(); defer { seqLock.unlock() }; let n = (seqMap[fd] ?? 0) &+ 1; seqMap[fd] = n; return n }
 nonisolated(unsafe) var nextAtom: UInt32 = 1000
 nonisolated(unsafe) var atoms: [String: UInt32] = [:]
 
@@ -243,7 +253,7 @@ func reply(_ fd: Int32, lsb: Bool, detail: UInt8 = 0, extra: ([UInt8]) = [], bui
     var w = ByteWriter(lsb: lsb)
     w.u8(1)                                 // reply
     w.u8(detail)
-    w.u16(seq)
+    w.u16(curSeq(fd))
     w.u32(UInt32(extra.count / 4))          // reply length (extra 4-byte units)
     build(&w)                               // 24 bytes of fixed reply data
     while w.bytes.count < 32 { w.u8(0) }
@@ -258,7 +268,7 @@ func replyRaw(_ fd: Int32, lsb: Bool, detail: UInt8, _ payload: [UInt8]) {
     while p.count < 24 { p.append(0) }
     while p.count % 4 != 0 { p.append(0) }
     var w = ByteWriter(lsb: lsb)
-    w.u8(1); w.u8(detail); w.u16(seq); w.u32(UInt32((p.count - 24) / 4))
+    w.u8(1); w.u8(detail); w.u16(curSeq(fd)); w.u32(UInt32((p.count - 24) / 4))
     w.raw(p)
     enqueue(fd, w.bytes)
 }
@@ -297,7 +307,7 @@ func valueFor(_ r: inout ByteReader, mask: UInt32, bit: UInt32) -> UInt32? {
 // Send a 32-byte event to the client.
 func sendEvent(_ fd: Int32, lsb: Bool, code: UInt8, build: (inout ByteWriter) -> Void) {
     var w = ByteWriter(lsb: lsb)
-    w.u8(code); w.u8(0); w.u16(seq)
+    w.u8(code); w.u8(0); w.u16(curSeq(fd))
     build(&w)
     while w.bytes.count < 32 { w.u8(0) }
     enqueue(fd, w.bytes)
@@ -341,7 +351,7 @@ func serveClient(_ cfd: Int32) {
     outQueuesLock.lock(); outQueues[cfd] = q; outQueuesLock.unlock()
     let writer = Thread { while let chunk = q.take() { writeAll(cfd, chunk) } }
     writer.stackSize = 1 << 20; writer.start()
-    seq = 0                              // sequence numbers restart per connection
+    setSeq(cfd, 0)                              // sequence numbers restart per connection
     sendSetup(cfd, lsb: lsb)
     FileHandle.standardError.write("client connected (lsb=\(lsb))\n".data(using: .utf8)!)
 
@@ -357,7 +367,7 @@ func serveClient(_ cfd: Int32) {
         }
         let bodyLen = Int(lenU) * 4 - 4
         let body = bodyLen > 0 ? (readExact(cfd, bodyLen) ?? []) : []
-        seq &+= 1
+        bumpSeq(cfd)
         if reqOrder.count < 100000 { reqOrder.append((opcode, detail, lenU)) }
         var r = ByteReader(body, lsb: lsb)
 
