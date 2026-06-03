@@ -376,9 +376,17 @@ before each run.
   desktop** (Greybird wallpaper + mouse logo, panel with menu/tray/clock,
   Home/File System/Trash icons, readable labels) into a native Metal framebuffer.
   **No XQuartz, no capture-bridge.** See `docs-native-desktop.png`.
-- 🔜 Remaining polish: rasterize `CompositeGlyphs` (most text already arrives as
-  PutImage, so the desktop is legible); live input injection over the same
-  connection (motion/button/key → nxagent); incremental damage-driven updates.
+- ✅ **Mouse + keyboard input** (`Input.swift`): NSEvents from the Metal window
+  → X input events delivered to nxagent's nested window (or active grab window);
+  US-layout keymap via GetKeyboardMapping/GetModifierMapping; macOS-vkc → X
+  keycode table; buttons, motion, drag, scroll, modifiers. Verified: injected
+  events reach nxagent and the apps react (a panel-menu click makes nxagent
+  render the applications menu, draw ops 39 → 105). GrabPointer/GrabKeyboard +
+  ConfigureWindow(op12) track the input target and popup geometry.
+- 🔜 Remaining polish: transient/override-redirect **popup compositing** into the
+  framebuffer (menus render but aren't yet positioned pixel-correctly); rasterize
+  `CompositeGlyphs` (most text already arrives as PutImage, so the desktop is
+  legible); incremental damage-driven updates instead of full snapshots.
 
 ## Key finding
 
