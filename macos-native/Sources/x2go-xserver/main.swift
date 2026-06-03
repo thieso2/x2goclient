@@ -390,10 +390,11 @@ Thread.detachNewThread {
 if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
     Thread.detachNewThread {
         var waited = 0.0
-        while waited < 90 {                               // wait until desktop is up
+        while waited < 90 {                               // wait until desktop fully loads
             Thread.sleep(forTimeInterval: 1.0); waited += 1
-            if inputWin != 0 && fb.hasContent() { break }
+            if inputWin != 0 && fb.hasContent() && compDesktopReady() && waited >= 8 { break }
         }
+        Thread.sleep(forTimeInterval: 4.0)                // let panel/icons settle
         FileHandle.standardError.write("inputtest: desktop-up=\(fb.hasContent()) target win=\(inputWin) fd=\(inputFd) after \(waited)s\n".data(using: .utf8)!)
         func clickLeft(_ x: Int, _ y: Int) {
             injectMotion(x, y); Thread.sleep(forTimeInterval: 0.15)
@@ -403,6 +404,7 @@ if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
         FileHandle.standardError.write("=== INPUT-BEGIN ===\n".data(using: .utf8)!)
         // 1) application-menu button (top-left of the panel)
         clickLeft(12, 11); Thread.sleep(forTimeInterval: 2.0)
+        compDumpStack("appmenu")
         fb.snapshotPPM(to: "/tmp/x2go_fb_appmenu.ppm")
         injectKey(macKeyCode: 53, down: true); injectKey(macKeyCode: 53, down: false) // Escape
         Thread.sleep(forTimeInterval: 0.8)

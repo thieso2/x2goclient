@@ -37,6 +37,9 @@ func renderAddGlyphs(_ body: [UInt8], lsb: Bool) {
         let w = Int(r.u16()), h = Int(r.u16())
         let x = si16(r.u16()), y = si16(r.u16())
         let dx = si16(r.u16()); _ = r.u16()   // yOff ignored
+        // Sanity bound: a misparsed/misaligned glyph could otherwise allocate and
+        // loop over billions of pixels while holding drawablesLock (a hang).
+        guard w >= 0, h >= 0, w <= 256, h <= 256 else { return }
         infos.append((w, h, x, y, dx))
     }
     drawablesLock.lock(); defer { drawablesLock.unlock() }

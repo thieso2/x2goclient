@@ -77,6 +77,27 @@ func compLowerWindow(_ wid: UInt32) {
     if let i = stackOrder.firstIndex(of: wid) { stackOrder.remove(at: i); stackOrder.insert(wid, at: 0) }
 }
 
+/// Desktop is "ready" once a non-full-screen window (panel/icon/app) has been
+/// drawn — not just the base full-screen mirror windows.
+func compDesktopReady() -> Bool {
+    drawablesLock.lock(); defer { drawablesLock.unlock() }
+    for wid in stackOrder {
+        guard let s = winSurface[wid], winMapped[wid] == true, s.drawn else { continue }
+        if s.w < fb.w && s.h < fb.h && s.w > 4 && s.h > 4 { return true }
+    }
+    return false
+}
+
+func compDumpStack(_ tag: String) {
+    drawablesLock.lock(); defer { drawablesLock.unlock() }
+    let parts = stackOrder.compactMap { wid -> String? in
+        guard let s = winSurface[wid], winMapped[wid] == true, s.drawn else { return nil }
+        let (ox, oy) = winAbsOrigin(wid)
+        return "\(wid)@(\(ox),\(oy))[\(s.w)x\(s.h)]"
+    }
+    FileHandle.standardError.write("STACK[\(tag)] bottom->top: \(parts.joined(separator: " "))\n".data(using: .utf8)!)
+}
+
 nonisolated(unsafe) var compFrame = 0
 /// Rebuild the framebuffer from all mapped window surfaces, bottom to top.
 func compositeToFramebuffer() {
