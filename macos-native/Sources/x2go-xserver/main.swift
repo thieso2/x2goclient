@@ -73,6 +73,19 @@ final class Framebuffer: @unchecked Sendable {
             }
         }
     }
+    /// True once a meaningful amount of the framebuffer differs from the init
+    /// slate color — i.e. the remote desktop has actually drawn.
+    func hasContent() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        var diff = 0, i = 0
+        while i + 2 < px.count {
+            if !(px[i] == 0x30 && px[i+1] == 0x28 && px[i+2] == 0x20) {
+                diff += 1; if diff > 2000 { return true }
+            }
+            i += 4 * 37
+        }
+        return false
+    }
     func snapshotPPM(to path: String) {
         lock.lock(); let copy = px; lock.unlock()
         var out = Data("P6\n\(w) \(h)\n255\n".utf8)
@@ -106,7 +119,7 @@ let drawablesLock = NSLock()
 nonisolated(unsafe) let drawLog = ProcessInfo.processInfo.environment["X2GO_DRAWLOG"] != nil
 nonisolated(unsafe) var drawLogN = 0
 func dlog(_ s: @autoclosure () -> String) {
-    if drawLog && drawLogN < 120 { drawLogN += 1; FileHandle.standardError.write("  \(s())\n".data(using: .utf8)!) }
+    if drawLog && drawLogN < 100000 { drawLogN += 1; FileHandle.standardError.write("  \(s())\n".data(using: .utf8)!) }
 }
 func drwKind(_ d: UInt32) -> String {
     if pixmaps[d] != nil { return "pixmap" }
@@ -374,6 +387,42 @@ Thread.detachNewThread {
     while true { fb.snapshotPPM(to: "/tmp/x2go_fb.ppm"); Thread.sleep(forTimeInterval: 0.5) }
 }
 
+// Headless input self-test: with no GUI/NSEvents, drive the injection path
+// directly to prove events reach nxagent and the apps react. Right-click the
+// desktop (xfdesktop context menu), then arrow-key down the menu.
+if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
+    Thread.detachNewThread {
+        var waited = 0.0
+        while waited < 90 {                               // wait until desktop is up
+            Thread.sleep(forTimeInterval: 1.0); waited += 1
+            if inputWin != 0 && fb.hasContent() { break }
+        }
+        FileHandle.standardError.write("inputtest: desktop-up=\(fb.hasContent()) target win=\(inputWin) fd=\(inputFd) after \(waited)s\n".data(using: .utf8)!)
+        func clickLeft(_ x: Int, _ y: Int) {
+            injectMotion(x, y); Thread.sleep(forTimeInterval: 0.15)
+            injectButton(1, down: true, fx: x, fy: y); Thread.sleep(forTimeInterval: 0.08)
+            injectButton(1, down: false, fx: x, fy: y)
+        }
+        FileHandle.standardError.write("=== INPUT-BEGIN ===\n".data(using: .utf8)!)
+        // 1) application-menu button (top-left of the panel)
+        clickLeft(12, 11); Thread.sleep(forTimeInterval: 2.0)
+        fb.snapshotPPM(to: "/tmp/x2go_fb_appmenu.ppm")
+        injectKey(macKeyCode: 53, down: true); injectKey(macKeyCode: 53, down: false) // Escape
+        Thread.sleep(forTimeInterval: 0.8)
+        // 2) double-click the Home desktop icon
+        clickLeft(26, 38); Thread.sleep(forTimeInterval: 0.1); clickLeft(26, 38)
+        Thread.sleep(forTimeInterval: 2.5)
+        fb.snapshotPPM(to: "/tmp/x2go_fb_dblclick.ppm")
+        // 3) right-click the desktop centre
+        injectMotion(640, 400); Thread.sleep(forTimeInterval: 0.2)
+        injectButton(3, down: true, fx: 640, fy: 400); Thread.sleep(forTimeInterval: 0.08)
+        injectButton(3, down: false, fx: 640, fy: 400)
+        Thread.sleep(forTimeInterval: 2.0)
+        fb.snapshotPPM(to: "/tmp/x2go_fb_rightclick.ppm")
+        FileHandle.standardError.write("inputtest: snapshots written\n".data(using: .utf8)!)
+    }
+}
+
 func si16(_ v: UInt16) -> Int { Int(Int16(bitPattern: v)) }
 
 // Extract one value (by its mask bit) from a value-mask + value list.
@@ -478,15 +527,11 @@ func serveClient(_ cfd: Int32) {
             _ = r.u32() /*drawable*/; let bw = r.u16(); let bh = r.u16()
             reply(cfd, lsb: lsb) { $0.u16(bw); $0.u16(bh) }
         case 101: // GetKeyboardMapping: body = first-keycode, count, pad
-            let first = r.u8(); let count = Int(r.u8()); _ = first
-            let kpkc = 1                       // keysyms per keycode
-            // reply must contain count*kpkc keysyms (4 bytes each), else nxagent
-            // mis-frames its keymap. NoSymbol(0) for now (display path).
-            let extra = [UInt8](repeating: 0, count: max(0, count) * kpkc * 4)
-            reply(cfd, lsb: lsb, detail: UInt8(kpkc), extra: extra) { _ in }
-        case 119: // GetModifierMapping -> 2 keycodes/modifier, all 0
-            let extra = [UInt8](repeating: 0, count: 8 * 2)
-            reply(cfd, lsb: lsb, detail: 2, extra: extra) { _ in }
+            let first = r.u8(); let count = Int(r.u8())
+            let extra = keyboardMappingBytes(first: first, count: max(0, count), lsb: lsb)
+            reply(cfd, lsb: lsb, detail: UInt8(KEYSYMS_PER_KEYCODE), extra: extra) { _ in }
+        case 119: // GetModifierMapping -> 2 keycodes/modifier (US layout)
+            reply(cfd, lsb: lsb, detail: 2, extra: modifierMappingBytes()) { _ in }
         case 84: // AllocColor -> echo for TrueColor
             _ = r.u32() /*cmap*/
             let rd = r.u16(), gn = r.u16(), bl = r.u16()
@@ -540,6 +585,14 @@ func serveClient(_ cfd: Int32) {
             }
             replyRaw(cfd, lsb: lsb, detail: 0, p.bytes)
 
+        case 26: // GrabPointer: detail=owner-events; body: grab-window, ... -> Success
+            let gw = r.u32(); dlog("GrabPointer window=\(gw)")
+            setInputTarget(cfd, lsb, gw)
+            reply(cfd, lsb: lsb, detail: 0) { _ in }      // status = GrabSuccess
+        case 31: // GrabKeyboard: detail=owner-events; body: grab-window, ... -> Success
+            let gw = r.u32(); dlog("GrabKeyboard window=\(gw)")
+            setInputTarget(cfd, lsb, gw)
+            reply(cfd, lsb: lsb, detail: 0) { _ in }
         case 45: // OpenFont: fid, name-len, pad, name -> accept (track nothing)
             break
         case 47: // QueryFont -> minimal fixed 6x13 monospace (allCharsExist, no per-char info)
@@ -575,11 +628,26 @@ func serveClient(_ cfd: Int32) {
             let mask = r.u32()
             let em = valueFor(&r, mask: mask, bit: 0x800) ?? 0   // CWEventMask
             windows[wid] = (x, y, ww, hh, em); winParent[wid] = parent
+            if em != 0 { dlog("CreateWindow \(wid) \(ww)x\(hh) eventmask=0x\(String(em, radix: 16))") }
+            noteInputWindow(cfd, lsb, wid, em, ww * hh)
         case 2: // ChangeWindowAttributes: window, value-mask, values
             let wid = r.u32(); let mask = r.u32()
             if let em = valueFor(&r, mask: mask, bit: 0x800) {
                 var win = windows[wid] ?? (0, 0, fb.w, fb.h, 0); win.mask = em; windows[wid] = win
+                dlog("ChangeWindowAttributes \(wid) eventmask=0x\(String(em, radix: 16)) area=\(win.w*win.h)")
+                noteInputWindow(cfd, lsb, wid, em, win.w * win.h)
             }
+        case 12: // ConfigureWindow: window, mask, pad, values -> track geometry (popups!)
+            let wid = r.u32(); let mask = Int(r.u16()); _ = r.u16()
+            var nx: Int?, ny: Int?, nw: Int?, nh: Int?
+            if mask & 0x1 != 0 { nx = si16(UInt16(truncatingIfNeeded: r.u32())) }
+            if mask & 0x2 != 0 { ny = si16(UInt16(truncatingIfNeeded: r.u32())) }
+            if mask & 0x4 != 0 { nw = Int(UInt16(truncatingIfNeeded: r.u32())) }
+            if mask & 0x8 != 0 { nh = Int(UInt16(truncatingIfNeeded: r.u32())) }
+            var win = windows[wid] ?? (0, 0, fb.w, fb.h, 0)
+            if let v = nx { win.x = v }; if let v = ny { win.y = v }
+            if let v = nw { win.w = v }; if let v = nh { win.h = v }
+            windows[wid] = win
         case 8: // MapWindow: window -> deliver MapNotify + Expose if selected
             let wid = r.u32()
             let win = windows[wid] ?? (0, 0, fb.w, fb.h, StructureNotifyMask | ExposureMask)

@@ -54,6 +54,52 @@ final class FBView: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
+    // MARK: - input forwarding (-> X events to nxagent)
+
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+            options: [.activeAlways, .mouseMoved, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self, userInfo: nil))
+    }
+
+    /// View point (bottom-left, points) -> framebuffer pixel (top-left).
+    private func fbPoint(_ e: NSEvent) -> (Int, Int) {
+        let p = convert(e.locationInWindow, from: nil)
+        let bw = max(1, bounds.width), bh = max(1, bounds.height)
+        let fx = Int((p.x / bw) * CGFloat(fb.w))
+        let fy = Int(((bh - p.y) / bh) * CGFloat(fb.h))
+        return (max(0, min(fb.w - 1, fx)), max(0, min(fb.h - 1, fy)))
+    }
+
+    override func mouseMoved(with e: NSEvent)        { let (x, y) = fbPoint(e); injectMotion(x, y) }
+    override func mouseDragged(with e: NSEvent)      { let (x, y) = fbPoint(e); injectMotion(x, y) }
+    override func rightMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
+    override func otherMouseDragged(with e: NSEvent) { let (x, y) = fbPoint(e); injectMotion(x, y) }
+    override func mouseDown(with e: NSEvent)         { let (x, y) = fbPoint(e); injectButton(1, down: true,  fx: x, fy: y) }
+    override func mouseUp(with e: NSEvent)           { let (x, y) = fbPoint(e); injectButton(1, down: false, fx: x, fy: y) }
+    override func rightMouseDown(with e: NSEvent)    { let (x, y) = fbPoint(e); injectButton(3, down: true,  fx: x, fy: y) }
+    override func rightMouseUp(with e: NSEvent)      { let (x, y) = fbPoint(e); injectButton(3, down: false, fx: x, fy: y) }
+    override func otherMouseDown(with e: NSEvent)    { let (x, y) = fbPoint(e); injectButton(2, down: true,  fx: x, fy: y) }
+    override func otherMouseUp(with e: NSEvent)      { let (x, y) = fbPoint(e); injectButton(2, down: false, fx: x, fy: y) }
+    override func scrollWheel(with e: NSEvent) {
+        let (x, y) = fbPoint(e)
+        if e.deltaY > 0.1 { injectScroll(up: true, fx: x, fy: y) }
+        else if e.deltaY < -0.1 { injectScroll(up: false, fx: x, fy: y) }
+    }
+    override func keyDown(with e: NSEvent) { injectKey(macKeyCode: e.keyCode, down: true) }
+    override func keyUp(with e: NSEvent)   { injectKey(macKeyCode: e.keyCode, down: false) }
+    override func flagsChanged(with e: NSEvent) {
+        let f = e.modifierFlags
+        injectModifierFlags(shift: f.contains(.shift), control: f.contains(.control),
+                            option: f.contains(.option), command: f.contains(.command),
+                            caps: f.contains(.capsLock))
+    }
+
     func start() {
         let t = Timer(timeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.render() }
@@ -96,9 +142,11 @@ final class PresenterDelegate: NSObject, NSApplicationDelegate {
                          styleMask: [.titled, .closable, .resizable, .miniaturizable],
                          backing: .buffered, defer: false)
         w.title = "X2Go (native · Metal · X server :77)"
+        w.acceptsMouseMovedEvents = true
         let v = FBView(fb: fb)
         w.contentView = v
         w.makeKeyAndOrderFront(nil)
+        w.makeFirstResponder(v)
         v.start()
         NSApp.activate(ignoringOtherApps: true)
         win = w
