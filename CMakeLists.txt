@@ -245,6 +245,21 @@ if(Qt6LinguistTools_FOUND)
     endif()
 endif()
 
+# --- Bundle nxproxy ---------------------------------------------------------
+# The client launches Contents/exe/nxproxy to render remote sessions. Point
+# -DX2GO_NXPROXY=/path/to/nxproxy at a built nxproxy to copy it (and its
+# libXcomp dependency, rewritten to @loader_path) into the bundle.
+set(X2GO_NXPROXY "" CACHE FILEPATH "Path to an nxproxy binary to bundle")
+if(X2GO_NXPROXY)
+    add_custom_command(TARGET x2goclient POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_BUNDLE_CONTENT_DIR:x2goclient>/exe"
+        COMMAND ${CMAKE_COMMAND} -E copy "${X2GO_NXPROXY}"
+            "$<TARGET_BUNDLE_CONTENT_DIR:x2goclient>/exe/nxproxy"
+        COMMENT "Bundling nxproxy"
+        VERBATIM)
+endif()
+
 # --- Code signing -----------------------------------------------------------
 # Ad-hoc sign by default so the bundle runs locally on Apple Silicon (which
 # requires a valid signature for arm64). Pass -DX2GO_CODESIGN_IDENTITY="Developer

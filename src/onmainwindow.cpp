@@ -3220,7 +3220,7 @@ void ONMainWindow::startDirectRDP()
 
     nxproxy=new QProcess;
     proxyErrString="";
-    connect ( nxproxy,SIGNAL ( error ( QProcess::ProcessError ) ),this,
+    connect ( nxproxy,SIGNAL ( errorOccurred ( QProcess::ProcessError ) ),this,
               SLOT ( slotProxyError ( QProcess::ProcessError ) ) );
     connect ( nxproxy,SIGNAL ( finished ( int,QProcess::ExitStatus ) ),this,
               SLOT ( slotProxyFinished ( int,QProcess::ExitStatus ) ) );
@@ -5471,6 +5471,25 @@ void ONMainWindow::slotTunnelOk(int)
         tmpDir.cd ("../exe");
         env.append ("NX_SYSTEM=" + tmpDir.absolutePath ());
     }
+    // Point nxproxy at XQuartz's real X11 auth cookie. XQuartz (started via
+    // 'open') keeps its MIT-MAGIC-COOKIE-1 in ~/.serverauth.<pid> and does not
+    // export XAUTHORITY to our process, so nxproxy would otherwise generate a
+    // fake cookie and be rejected with 'Invalid MIT-MAGIC-COOKIE-1 key'. This
+    // is timing-immune (unlike disabling access control, which XQuartz may
+    // reset during a cold start).
+    {
+        QDir authDir (QDir::homePath ());
+        authDir.setNameFilters (QStringList () << ".serverauth.*");
+        authDir.setFilter (QDir::Files | QDir::Hidden);
+        authDir.setSorting (QDir::Time);
+        QStringList authFiles = authDir.entryList ();
+        if (!authFiles.isEmpty ())
+        {
+            QString authPath = QDir::homePath () + "/" + authFiles.first ();
+            env.append ("XAUTHORITY=" + authPath);
+            x2goDebug << "Using XQuartz XAUTHORITY: " << authPath;
+        }
+    }
     if (dispInd == -1)
     {
 
@@ -5481,7 +5500,7 @@ void ONMainWindow::slotTunnelOk(int)
 #endif
     nxproxy->setEnvironment ( env );
 
-    connect ( nxproxy,SIGNAL ( error ( QProcess::ProcessError ) ),this,
+    connect ( nxproxy,SIGNAL ( errorOccurred ( QProcess::ProcessError ) ),this,
               SLOT ( slotProxyError ( QProcess::ProcessError ) ) );
     connect ( nxproxy,SIGNAL ( finished ( int,QProcess::ExitStatus ) ),this,
               SLOT ( slotProxyFinished ( int,QProcess::ExitStatus ) ) );
@@ -5596,18 +5615,25 @@ void ONMainWindow::slotSetModMap()
         QProcessEnvironment tmp_env = QProcessEnvironment::systemEnvironment ();
         QString path_val = tmp_env.value ("PATH");
 
-        /* Let's set a reasonable default value if none is provided. */
-        if (path_val.isEmpty ()) {
-            /* Prefer the default MacPorts prefix. */
-            path_val = "/opt/local/bin:/opt/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin:/usr/X11R6/bin:/opt/X11/bin";
-            tmp_env.insert ("PATH", path_val);
-        }
+        /* Always make sure the X11 binary directories (where xmodmap lives) are
+         * on PATH. A Finder/LaunchServices-launched .app inherits a minimal PATH
+         * that lacks /opt/X11/bin, so xmodmap would not be found -- and the
+         * resulting modal error dialog would block runCommand() (which starts
+         * the actual desktop). Appending the well-known locations is harmless. */
+        path_val += ":/opt/X11/bin:/usr/X11/bin:/usr/X11R6/bin:/opt/local/bin:/opt/local/sbin:/usr/local/bin";
+        tmp_env.insert ("PATH", path_val);
 
         pr.setProcessEnvironment (tmp_env);
 
+        /* Absolute path: QProcess resolves the program against the parent app's
+         * PATH (minimal under LaunchServices), not tmp_env's PATH above. */
+        QString xmodmap_bin ("/opt/X11/bin/xmodmap");
+        if (!QFile::exists (xmodmap_bin))
+            xmodmap_bin = "xmodmap";
+
         QStringList key_map_fetch_args;
         key_map_fetch_args << "-pke";
-        pr.start ("xmodmap", key_map_fetch_args);
+        pr.start (xmodmap_bin, key_map_fetch_args);
         bool key_map_fetch_ret = pr.waitForStarted ();
 
         if (!key_map_fetch_ret) {
@@ -5624,7 +5650,7 @@ void ONMainWindow::slotSetModMap()
 
             QStringList mod_fetch_args;
             mod_fetch_args << "-pm";
-            pr.start ("xmodmap", mod_fetch_args);
+            pr.start (xmodmap_bin, mod_fetch_args);
             bool mod_fetch_ret = pr.waitForStarted ();
 
             if (!mod_fetch_ret) {
@@ -5800,7 +5826,7 @@ void ONMainWindow::slotProxyFinished ( int,QProcess::ExitStatus )
 
     x2goDebug<<"Deleting Proxy." ;
 
-    disconnect ( nxproxy,SIGNAL ( error ( QProcess::ProcessError ) ),this,
+    disconnect ( nxproxy,SIGNAL ( errorOccurred ( QProcess::ProcessError ) ),this,
                  SLOT ( slotProxyError ( QProcess::ProcessError ) ) );
     disconnect ( nxproxy,SIGNAL ( finished ( int,QProcess::ExitStatus ) ),this,
                  SLOT ( slotProxyFinished ( int,QProcess::ExitStatus ) ) );
@@ -5977,6 +6003,15 @@ void ONMainWindow::slotProxyStderr()
                 "Established X server connection" ) !=-1 )
     {
         setStatStatus ( tr ( "running" ) );
+        // Start the session command (e.g. the desktop) as soon as the X
+        // connection is established. Done here -- before the keyboard/modmap
+        // handling below -- so a non-fatal xmodmap error dialog can never block
+        // the desktop from launching (notably on macOS launched from Finder).
+        if ( newSession )
+        {
+            runCommand();
+            newSession=false;
+        }
 #ifndef CFGPLUGIN
         if (trayEnabled)
         {
@@ -8595,7 +8630,7 @@ void ONMainWindow::slotStartPGPAuth()
               this,
               SLOT (
                   slotScDaemonFinished ( int, QProcess::ExitStatus ) ) );
-    connect (scDaemon, SIGNAL (error (QProcess::ProcessError)), this,
+    connect (scDaemon, SIGNAL (errorOccurred (QProcess::ProcessError)), this,
              SLOT (slotScDaemonError (QProcess::ProcessError)));
     scDaemon->start ( "scdaemon",arguments );
     QTimer::singleShot ( 3000, this, SLOT ( slotCheckScDaemon() ) );
@@ -9015,6 +9050,30 @@ QString ONMainWindow::getXDisplay()
             qputenv ("DISPLAY", ":0");
 
             x2goDebug<< "XQuartz display :0 is up.";
+
+            // Allow local (UNIX-socket) clients to connect. XQuartz started via
+            // 'open' keeps its auth cookie in ~/.serverauth.<pid>, which nxproxy
+            // cannot read -- without this it would be rejected with an
+            // 'Invalid MIT-MAGIC-COOKIE-1 key' error and the session would die.
+            QProcess xhost;
+            QProcessEnvironment xenv = QProcessEnvironment::systemEnvironment ();
+            xenv.insert ("DISPLAY", ":0");
+            xenv.insert ("PATH", xenv.value ("PATH") + ":/opt/X11/bin:/usr/X11/bin");
+            xhost.setProcessEnvironment (xenv);
+            // 'xhost +' (no host) disables access control entirely, so the
+            // server accepts nxproxy's fake cookie. '+local:' is not enough --
+            // an invalid cookie is rejected before host-based rules apply.
+            // XQuartz runs with -nolisten tcp, so this stays local-only.
+            // NB: use an absolute path -- QProcess resolves the program against
+            // the parent app's PATH (minimal under LaunchServices), not the
+            // child environment's PATH set above.
+            QString xhost_bin ("/opt/X11/bin/xhost");
+            if (!QFile::exists (xhost_bin))
+                xhost_bin = "/usr/X11/bin/xhost";
+            xhost.start (xhost_bin, QStringList () << "+");
+            xhost.waitForFinished (5000);
+
+            x2goDebug<< "xhost + -> " << xhost.readAllStandardOutput ();
         }
     }
 
