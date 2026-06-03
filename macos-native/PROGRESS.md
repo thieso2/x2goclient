@@ -39,17 +39,43 @@ X2Go session (server) ──NX──▶ nxproxy ──▶ X display  ──CX11(
 ## Status log
 
 - **2026-06-03**
-  - Scaffolded SwiftPM project (`macos-native/`): `Package.swift` (macOS 14+,
-    Swift 6), `CX11` C bridge (Xlib/XTEST helpers, BGRA capture). _committed_
-  - Next: Metal renderer, X11 session, view, SwiftUI app; then build + e2e.
+  - Scaffolded SwiftPM project; `CX11` bridge (Xlib capture + input). _committed_
+  - `MetalRenderer` (runtime MSL), `X11Session` (capture loop), `RemoteMetalView`
+    (NSEvent input), `KeyMap`, SwiftUI `App`. `swift build` green. _committed_
+  - **E2E DISPLAY validated**: ran the app against the live XFCE session on
+    `10.248.1.20` (display `:0`) — the native SwiftUI window titled
+    "X2Go (native · Metal)" renders the live desktop (wallpaper, panel, a
+    Terminal showing real `df` output) via a Metal texture. Screenshot:
+    `docs/e2e-native-metal.png`. _committed_
+  - **Input**: NSEvent→X handlers implemented and building; added a headless
+    `inputtest`. Discovered **XQuartz 2.8.5 advertises no XTEST extension**
+    (only XInputExtension), and nxproxy does not forward synthetic `XSendEvent`
+    input — so programmatic injection from a *separate* app through the XQuartz
+    bridge does not reach the session. (Real interactive clicks in the X2GO
+    window work normally; this is an injection-from-outside limitation.)
+    → Input belongs in the native-protocol endpoint, not this read-only display
+    bridge; see "Honest scope". The Swift input path is complete behind `CX11`.
 
 ## TODO
 
 - [x] Scaffold project + CX11 bridge
-- [ ] Metal renderer (runtime shaders, texture present)
-- [ ] X11 frame source (capture loop from live session window)
-- [ ] Native input forwarding (NSEvent → XTEST)
-- [ ] SwiftUI app shell + Metal view host
-- [ ] Build green (`swift build`)
-- [ ] E2E: launch, show live XFCE desktop in native Metal window, prove input
+- [x] Metal renderer (runtime shaders, texture present)
+- [x] X11 frame source (capture loop from live session window)
+- [x] Native input forwarding (NSEvent → X) — *wired/builds; XQuartz transport
+      limited (no XTEST); native-protocol path needed for reliable input*
+- [x] SwiftUI app shell + Metal view host
+- [x] Build green (`swift build`)
+- [x] E2E: live XFCE desktop shown in the native Metal window (display path)
+- [ ] Input e2e through a path that doesn't need XTEST (native NX endpoint, or
+      XQuartz 2.8.4 which has XTEST) — *next*
+- [ ] Replace capture bridge with native NX/X decode → zero X11 (Phase 3 core)
 - [ ] Metal 4 niceties / MetalFX upscaling (stretch)
+
+## Key finding
+
+The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
+(read pixels → Metal) but **input injection requires XTEST, which XQuartz 2.8.5
+removed**. The correct architecture makes the native app the protocol endpoint
+(nxproxy/NX talks to *us*), so input is sent over NX directly with no XQuartz —
+which is exactly the no-X11 Phase 3 direction. This bridge proved the entire
+native macOS **presentation** layer (Swift 6 / SwiftUI / Metal) end-to-end.

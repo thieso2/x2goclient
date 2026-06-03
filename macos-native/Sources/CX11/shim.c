@@ -8,7 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-struct cx11_display { Display *dpy; };
+struct cx11_display { Display *dpy; Window target; int last_x, last_y; };
 
 cx11_display *cx11_open(const char *name) {
     Display *dpy = XOpenDisplay(name);
@@ -108,34 +108,84 @@ int cx11_capture_bgra(cx11_display *d, uint64_t win, int w, int h, uint8_t *out)
     return ok;
 }
 
-void cx11_motion(cx11_display *d, int root_x, int root_y) {
-    if (!d || !d->dpy) return;
-    XTestFakeMotionEvent(d->dpy, -1, root_x, root_y, CurrentTime);
+void cx11_set_target(cx11_display *d, uint64_t win) {
+    if (!d) return;
+    d->target = (Window)win;
+}
+
+static unsigned int pointer_state(cx11_display *d) {
+    Window r, c; int rx, ry, wx, wy; unsigned int mask = 0;
+    XQueryPointer(d->dpy, d->target ? d->target : DefaultRootWindow(d->dpy),
+                  &r, &c, &rx, &ry, &wx, &wy, &mask);
+    return mask;
+}
+
+void cx11_motion(cx11_display *d, int x, int y) {
+    if (!d || !d->dpy || !d->target) return;
+    XWarpPointer(d->dpy, None, d->target, 0, 0, 0, 0, x, y);
+    d->last_x = x; d->last_y = y;
+    XFlush(d->dpy);
+}
+
+static void send_button(cx11_display *d, int button, Bool press) {
+    Window root = DefaultRootWindow(d->dpy);
+    int rx = 0, ry = 0; Window child;
+    XTranslateCoordinates(d->dpy, d->target, root, d->last_x, d->last_y, &rx, &ry, &child);
+    XButtonEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = press ? ButtonPress : ButtonRelease;
+    ev.display = d->dpy;
+    ev.window = d->target;
+    ev.root = root;
+    ev.subwindow = None;
+    ev.time = CurrentTime;
+    ev.x = d->last_x; ev.y = d->last_y;
+    ev.x_root = rx; ev.y_root = ry;
+    ev.state = pointer_state(d);
+    ev.button = (unsigned)button;
+    ev.same_screen = True;
+    XSendEvent(d->dpy, d->target, True,
+               press ? ButtonPressMask : ButtonReleaseMask, (XEvent *)&ev);
     XFlush(d->dpy);
 }
 
 void cx11_button(cx11_display *d, int button, int is_press) {
-    if (!d || !d->dpy) return;
-    XTestFakeButtonEvent(d->dpy, (unsigned)button, is_press ? True : False, CurrentTime);
-    XFlush(d->dpy);
+    if (!d || !d->dpy || !d->target) return;
+    send_button(d, button, is_press ? True : False);
 }
 
 void cx11_scroll(cx11_display *d, int up, int amount) {
-    if (!d || !d->dpy) return;
+    if (!d || !d->dpy || !d->target) return;
     int button = up ? 4 : 5;          /* X11 wheel = buttons 4/5 */
     if (amount < 1) amount = 1;
     for (int i = 0; i < amount; ++i) {
-        XTestFakeButtonEvent(d->dpy, (unsigned)button, True, CurrentTime);
-        XTestFakeButtonEvent(d->dpy, (unsigned)button, False, CurrentTime);
+        send_button(d, button, True);
+        send_button(d, button, False);
     }
-    XFlush(d->dpy);
 }
 
 void cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press) {
-    if (!d || !d->dpy) return;
+    if (!d || !d->dpy || !d->target) return;
     KeyCode kc = XKeysymToKeycode(d->dpy, (KeySym)keysym);
     if (kc == 0) return;
-    XTestFakeKeyEvent(d->dpy, kc, is_press ? True : False, CurrentTime);
+    Window root = DefaultRootWindow(d->dpy);
+    int rx = 0, ry = 0; Window child;
+    XTranslateCoordinates(d->dpy, d->target, root, d->last_x, d->last_y, &rx, &ry, &child);
+    XKeyEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = is_press ? KeyPress : KeyRelease;
+    ev.display = d->dpy;
+    ev.window = d->target;
+    ev.root = root;
+    ev.subwindow = None;
+    ev.time = CurrentTime;
+    ev.x = d->last_x; ev.y = d->last_y;
+    ev.x_root = rx; ev.y_root = ry;
+    ev.state = pointer_state(d);
+    ev.keycode = kc;
+    ev.same_screen = True;
+    XSendEvent(d->dpy, d->target, True,
+               is_press ? KeyPressMask : KeyReleaseMask, (XEvent *)&ev);
     XFlush(d->dpy);
 }
 

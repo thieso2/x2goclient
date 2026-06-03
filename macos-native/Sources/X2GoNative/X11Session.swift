@@ -29,6 +29,7 @@ final class X11Session: @unchecked Sendable {
                 var ww: Int32 = 0, hh: Int32 = 0
                 if cx11_window_size(dpy, w, &ww, &hh) == 1, ww > 0, hh > 0 {
                     width = Int(ww); height = Int(hh)
+                    cx11_set_target(dpy, w)
                     buffer = .allocate(capacity: width * height * 4)
                     buffer?.initialize(repeating: 0, count: width * height * 4)
                     return true
@@ -72,12 +73,10 @@ final class X11Session: @unchecked Sendable {
 
     // MARK: - Input (view coords are top-left, in *pixels* of the session)
 
-    /// Map a session-pixel coordinate to root and inject pointer motion.
+    /// Inject pointer motion to a session-pixel (window-relative) coordinate.
     func moveMouse(toSessionX x: Int, y: Int) {
         guard dpy != nil, window != 0 else { return }
-        var rx: Int32 = 0, ry: Int32 = 0
-        guard cx11_window_root_origin(dpy, window, &rx, &ry) == 1 else { return }
-        cx11_motion(dpy, rx + Int32(x), ry + Int32(y))
+        cx11_motion(dpy, Int32(x), Int32(y))
     }
 
     func mouseButton(_ button: Int, press: Bool) {

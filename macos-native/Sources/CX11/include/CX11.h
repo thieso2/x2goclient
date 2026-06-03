@@ -34,11 +34,16 @@ int           cx11_window_root_origin(cx11_display *d, uint64_t win, int *rx, in
  * Returns 1 on success, 0 on failure (e.g. window unmapped/obscured). */
 int           cx11_capture_bgra(cx11_display *d, uint64_t win, int w, int h, uint8_t *out);
 
-/* --- input injection via XTEST (operates on the display, root-relative) --- */
-void          cx11_motion(cx11_display *d, int root_x, int root_y);
+/* --- input injection ---
+ * XQuartz does not provide XTEST, so we drive the session window directly:
+ * real pointer motion via XWarpPointer, and synthetic button/key events via
+ * XSendEvent to the (single) X2GO window, which nxproxy forwards to the agent.
+ * Coordinates are window-relative pixels. Call cx11_set_target() first. */
+void          cx11_set_target(cx11_display *d, uint64_t win);
+void          cx11_motion(cx11_display *d, int x, int y);
 void          cx11_button(cx11_display *d, int button, int is_press);
 void          cx11_scroll(cx11_display *d, int up, int amount);
-/* Map a keysym to a keycode and fake a key press/release. */
+/* Map a keysym to a keycode and send a key press/release. */
 void          cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press);
 
 /* Flush pending X requests. */

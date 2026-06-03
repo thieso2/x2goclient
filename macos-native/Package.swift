@@ -31,6 +31,18 @@ let package = Package(
                     "-Xlinker", "-rpath", "-Xlinker", x11Lib
                 ])
             ]
+        ),
+        // Headless e2e check of the input bridge (same CX11 calls the GUI uses).
+        .executableTarget(
+            name: "inputtest",
+            dependencies: ["CX11"],
+            swiftSettings: [ .unsafeFlags(["-Xcc", "-I\(x11Include)"]) ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L\(x11Lib)", "-lX11", "-lXext", "-lXtst",
+                    "-Xlinker", "-rpath", "-Xlinker", x11Lib
+                ])
+            ]
         )
     ]
 )
