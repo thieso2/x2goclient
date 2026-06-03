@@ -15,6 +15,9 @@ let FB_W = 1280, FB_H = 800
 let ROOT: UInt32 = 0x0000_0001
 let CMAP: UInt32 = 0x0000_0020
 let VISUAL: UInt32 = 0x0000_0021
+let RENDER_OP: UInt8 = 139          // major opcode we advertise for RENDER
+let PF_RGB24: UInt32 = 0x0000_0030  // PICTFORMAT ids
+let PF_ARGB32: UInt32 = 0x0000_0031
 
 signal(SIGPIPE, SIG_IGN)
 
@@ -381,8 +384,14 @@ func serveClient(_ cfd: Int32) {
             reply(cfd, lsb: lsb, detail: 0) { $0.u32(0); $0.u32(0); $0.u32(0) }
         case 43: // GetInputFocus
             reply(cfd, lsb: lsb, detail: 1 /*PointerRoot*/) { $0.u32(ROOT) }
-        case 98: // QueryExtension -> not present
-            reply(cfd, lsb: lsb) { $0.u8(0); $0.u8(0); $0.u8(0); $0.u8(0) }
+        case 98: // QueryExtension: present only for RENDER (gtk/xfce need it)
+            let nlen = Int(r.u16()); _ = r.u16()
+            let name = body.count >= 4 + nlen ? String(decoding: body[4..<4+nlen], as: UTF8.self) : ""
+            if name == "RENDER" {
+                reply(cfd, lsb: lsb) { $0.u8(1); $0.u8(RENDER_OP); $0.u8(0); $0.u8(128) }
+            } else {
+                reply(cfd, lsb: lsb) { $0.u8(0); $0.u8(0); $0.u8(0); $0.u8(0) }
+            }
         case 99: // ListExtensions -> none
             reply(cfd, lsb: lsb, detail: 0) { _ in }
         case 97: // QueryBestSize -> echo requested size
@@ -493,6 +502,35 @@ func serveClient(_ cfd: Int32) {
             let dx = si16(r.u16()), dy = si16(r.u16())
             if format == 2, iw > 0, ih > 0, body.count >= 20 {   // ZPixmap
                 fb.putImageZ(dx, dy, iw, ih, body[20...])
+            }
+
+        case RENDER_OP: // RENDER extension — minor opcode is in `detail`
+            switch detail {
+            case 0: // RenderQueryVersion -> echo client's requested version
+                let cmaj = r.u32(); let cmin = r.u32()
+                reply(cfd, lsb: lsb) { $0.u32(cmaj); $0.u32(min(cmin, 11)) }
+            case 1: // RenderQueryPictFormats
+                var pf = ByteWriter(lsb: lsb)
+                pf.u32(2); pf.u32(1); pf.u32(2); pf.u32(1); pf.u32(1); pf.pad(4) // counts + unused
+                // PICTFORMINFO RGB24
+                pf.u32(PF_RGB24); pf.u8(1); pf.u8(24); pf.pad(2)
+                pf.u16(16); pf.u16(0xff); pf.u16(8); pf.u16(0xff); pf.u16(0); pf.u16(0xff); pf.u16(0); pf.u16(0)
+                pf.u32(0)
+                // PICTFORMINFO ARGB32
+                pf.u32(PF_ARGB32); pf.u8(1); pf.u8(32); pf.pad(2)
+                pf.u16(16); pf.u16(0xff); pf.u16(8); pf.u16(0xff); pf.u16(0); pf.u16(0xff); pf.u16(24); pf.u16(0xff)
+                pf.u32(0)
+                // PICTSCREEN
+                pf.u32(2); pf.u32(PF_RGB24)              // numDepths, fallback
+                pf.u8(24); pf.u8(0); pf.u16(1); pf.pad(4) // depth 24, 1 visual
+                pf.u32(VISUAL); pf.u32(PF_RGB24)
+                pf.u8(32); pf.u8(0); pf.u16(0); pf.pad(4) // depth 32, 0 visuals
+                pf.u32(0)                                 // subpixel (1 entry)
+                replyRaw(cfd, lsb: lsb, detail: 0, pf.bytes)
+            case 2: // RenderQueryPictIndexValues -> none
+                reply(cfd, lsb: lsb) { $0.u32(0) }
+            default:
+                break // CreatePicture/Composite/CompositeGlyphs/etc.: accept, no reply
             }
 
         default:
