@@ -684,6 +684,14 @@ func serveClient(_ cfd: Int32) {
         case 4:  // DestroyWindow: window -> drop its surface
             let wid = r.u32(); compDestroyWindow(wid)
             drawablesLock.lock(); windows[wid] = nil; winParent[wid] = nil; drawablesLock.unlock()
+        case 7:  // ReparentWindow: window, parent, x, y -> new parent + position
+            let wid = r.u32(); let parent = r.u32()
+            let x = si16(r.u16()), y = si16(r.u16())
+            drawablesLock.lock()
+            winParent[wid] = parent
+            var win = windows[wid] ?? (0, 0, fb.w, fb.h, 0); win.x = x; win.y = y; windows[wid] = win
+            drawablesLock.unlock()
+            compRaiseWindow(wid); compDirty = true
 
         case 55: // CreateGC: cid, drawable, value-mask, values
             let cid = r.u32(); _ = r.u32(); let mask = r.u32()

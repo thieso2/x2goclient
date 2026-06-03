@@ -94,9 +94,11 @@ func compDumpStack(_ tag: String) {
     let parts = stackOrder.compactMap { wid -> String? in
         guard let s = winSurface[wid], winMapped[wid] == true, s.drawn else { return nil }
         let (ox, oy) = winAbsOrigin(wid)
-        return "\(wid)@(\(ox),\(oy))[\(s.w)x\(s.h)]"
+        let lx = windows[wid]?.x ?? 0, ly = windows[wid]?.y ?? 0
+        let par = winParent[wid] ?? 0
+        return "\(wid)<-\(par)@abs(\(ox),\(oy))loc(\(lx),\(ly))[\(s.w)x\(s.h)]"
     }
-    FileHandle.standardError.write("STACK[\(tag)] bottom->top: \(parts.joined(separator: " "))\n".data(using: .utf8)!)
+    FileHandle.standardError.write("STACK[\(tag)]: \(parts.joined(separator: " "))\n".data(using: .utf8)!)
 }
 
 nonisolated(unsafe) var compFrame = 0
