@@ -249,7 +249,14 @@ func acceptLoop() {
   while true {
     let cfd = accept(lfd, nil, nil)
     if cfd < 0 { continue }
-    guard let lsb = readClientSetup(cfd) else { close(cfd); continue }
+    // One thread per client so a silent probe connection (getXDisplay's
+    // QLocalSocket) can't block accepting the real nxproxy connection.
+    Thread.detachNewThread { serveClient(cfd) }
+  }
+}
+
+func serveClient(_ cfd: Int32) {
+    guard let lsb = readClientSetup(cfd) else { close(cfd); return }
     seq = 0                              // sequence numbers restart per connection
     sendSetup(cfd, lsb: lsb)
     FileHandle.standardError.write("client connected (lsb=\(lsb))\n".data(using: .utf8)!)
@@ -332,7 +339,6 @@ func acceptLoop() {
         .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
     FileHandle.standardError.write("client disconnected. unhandled: \(summary)\n".data(using: .utf8)!)
     close(cfd)
-  }
 }
 
 // Serve on a background thread; present the framebuffer via Metal on the main
