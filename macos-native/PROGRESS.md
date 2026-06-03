@@ -321,6 +321,40 @@ the agent-mode channel/token handling. That is genuine multi-session research.
   XFCE desktop in a native Metal window (docs/e2e-native-metal.png); only input
   is missing (XTEST absent on XQuartz 2.8.5 → use 2.8.4 or the native endpoint).
 
+
+## DEFINITIVE localization (instrumented every layer)
+
+Instrumented the x2goclient's libssh tunnel (sshmasterconnection.cpp channelLoop)
+with runtime close-reason logging. Result for the NX data channel
+(sock 18, fwd localhost:<nxport>):
+  CHANNELCLOSE reason: channel SSH_EOF (remote/nxagent closed)
+So **nxagent closes the NX connection first** (the neutral middle — the
+x2goclient's forwarder — sees the *remote* end EOF). nxagent's own log confirms:
+"Display failure detected" → it gives up on the real X server (us, via nxproxy).
+
+Why: nxagent never receives our X server's replies/events relayed back. nxproxy
+logs "Going to flush any data to the proxy" but flushes nothing — it is **not
+relaying our X server output back to nxagent**, so nxagent times out
+(agent params 5000/...) and declares display failure. Our server is fine and
+keeps serving; nxproxy accepts our protocol (no local X error).
+
+Root cause (final): with a *minimal* hand-written X server, nxproxy's agent-mode
+relay loop (nxcomp ClientChannel/ServerChannel + token flow) doesn't forward our
+responses to nxagent, so nxagent times out. Making it forward requires matching
+nxcomp's agent-mode expectations far more completely — effectively a much fuller
+X server (RENDER, full visual/format set, exact reply semantics) plus
+understanding nxcomp's relay/token path. That is genuine multi-session,
+nxcomp-internals research, not a small fix.
+
+### Honest end state
+- ✅ Native Swift/SwiftUI/**Metal** X server: real X clients connect; core drawing
+  → Metal (no XQuartz); a real X2Go session connects, establishes, renders
+  initial content (X11 logo).
+- ❌ Full streaming XFCE desktop via the native endpoint — blocked by nxcomp
+  agent-mode relay not forwarding our responses (nxagent → Display failure).
+  Localized definitively; the fix is deep nxcomp-relay work.
+- ✅ Working full-desktop path remains the capture-bridge (docs/e2e-native-metal.png).
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**

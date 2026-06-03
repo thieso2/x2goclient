@@ -346,6 +346,7 @@ func serveClient(_ cfd: Int32) {
     FileHandle.standardError.write("client connected (lsb=\(lsb))\n".data(using: .utf8)!)
 
     var unknown: [UInt8: Int] = [:]
+    var reqOrder: [(UInt8, UInt8, UInt16)] = []
     requestLoop: while true {
         guard let h = readExact(cfd, 4) else { break }
         let opcode = h[0], detail = h[1]
@@ -357,6 +358,7 @@ func serveClient(_ cfd: Int32) {
         let bodyLen = Int(lenU) * 4 - 4
         let body = bodyLen > 0 ? (readExact(cfd, bodyLen) ?? []) : []
         seq &+= 1
+        if reqOrder.count < 100000 { reqOrder.append((opcode, detail, lenU)) }
         var r = ByteReader(body, lsb: lsb)
 
         switch opcode {
@@ -494,7 +496,8 @@ func serveClient(_ cfd: Int32) {
     }
     let summary = unknown.sorted { $0.value > $1.value }.prefix(12)
         .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
-    FileHandle.standardError.write("client disconnected. unhandled: \(summary)\n".data(using: .utf8)!)
+    let tail = reqOrder.suffix(30).map { "op\($0.0)/d\($0.1)/l\($0.2)" }.joined(separator: " ")
+    FileHandle.standardError.write("client disconnected. total=\(reqOrder.count) unhandled: \(summary)\nLAST30: \(tail)\n".data(using: .utf8)!)
     q.close()
     outQueuesLock.lock(); outQueues[cfd] = nil; outQueuesLock.unlock()
     close(cfd)

@@ -1607,6 +1607,7 @@ void SshMasterConnection::channelLoop()
             int rez=channel_poll ( channel,0 );
             if ( rez==SSH_EOF )
             {
+                x2goDebug<<"CHANNELCLOSE reason: channel SSH_EOF (remote/nxagent closed)";
 #ifdef DEBUG
                 x2goDebug<<"EOF on channel "<<channel<<"; SshProcess object: "<<channelConnections[i].creator->pid;
 #endif
@@ -1662,6 +1663,7 @@ void SshMasterConnection::channelLoop()
 
                 if ( channel_is_eof ( channel ) )
                 {
+                    x2goDebug<<"CHANNELCLOSE reason: channel_is_eof (remote/nxagent closed)";
 #ifdef DEBUG
                     x2goDebug<<"EOF on channel "<<channel<<"; SshProcess object: "<<channelConnections[i].creator->pid;
 #endif
@@ -1711,6 +1713,7 @@ void SshMasterConnection::channelLoop()
                 }
                 if ( nbytes==0 )
                 {
+                    x2goDebug<<"CHANNELCLOSE reason: tcpSocket recv==0 (local/nxproxy closed)";
 #ifdef DEBUG
                     x2goDebug<<"Socket "<<tcpSocket<<" closed."<< "\n";
 #endif
@@ -1726,6 +1729,9 @@ void SshMasterConnection::channelLoop()
 void SshMasterConnection::finalize ( int item )
 {
     int tcpSocket=channelConnections.at ( item ).sock;
+    x2goDebug<<"CHANNELCLOSE: finalize item "<<item<<" sock "<<tcpSocket
+             <<" fwd "<<channelConnections.at(item).forwardHost
+             <<":"<<channelConnections.at(item).forwardPort;
     ssh_channel channel=channelConnections.at ( item ).channel;
     if ( channel )
     {
