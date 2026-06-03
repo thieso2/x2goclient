@@ -31,6 +31,7 @@ final class Surface: @unchecked Sendable {
 nonisolated(unsafe) var winSurface: [UInt32: Surface] = [:]
 nonisolated(unsafe) var winMapped: [UInt32: Bool] = [:]
 nonisolated(unsafe) var stackOrder: [UInt32] = []   // bottom -> top
+nonisolated(unsafe) var compDirty = true            // recomposite only when content changed
 
 // Caller must hold drawablesLock.
 func surfaceFor(_ d: UInt32) -> Surface? {

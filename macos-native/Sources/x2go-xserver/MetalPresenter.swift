@@ -50,7 +50,8 @@ final class MetalRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Send
     }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-        compositeToFramebuffer()
+        // The compositor thread builds `fb`; here we only upload + present so the
+        // display link never holds drawablesLock (which would starve drawing).
         fb.lock.lock()
         fb.px.withUnsafeBytes { p in
             tex.replace(region: MTLRegionMake2D(0, 0, fb.w, fb.h), mipmapLevel: 0,

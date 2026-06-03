@@ -157,7 +157,7 @@ func winAbsOrigin(_ d: UInt32) -> (Int, Int) {
     }
     guard let s = surfaceFor(d), x >= 0, y >= 0, x < s.w, y < s.h else { return }
     let o = (y * s.w + x) * 4; s.px[o] = c.0; s.px[o+1] = c.1; s.px[o+2] = c.2; s.px[o+3] = 0xff
-    s.drawn = true
+    s.drawn = true; compDirty = true
 }
 func drwFill(_ d: UInt32, _ x: Int, _ y: Int, _ rw: Int, _ rh: Int, _ bgra: (UInt8,UInt8,UInt8)) {
     drawablesLock.lock(); defer { drawablesLock.unlock() }
@@ -380,8 +380,17 @@ let lfd = listenUnix(path)
 
 // Periodically snapshot the framebuffer for headless validation (and as the
 // surface Metal will consume once wired into the app).
+// Single compositor thread (~30fps, only when content changed). Keeping it to
+// one thread bounds drawablesLock contention so the X server's drawing threads
+// aren't starved; the Metal display link only presents the result.
 Thread.detachNewThread {
-    while true { compositeToFramebuffer(); fb.snapshotPPM(to: "/tmp/x2go_fb.ppm"); Thread.sleep(forTimeInterval: 0.3) }
+    var frame = 0
+    while true {
+        if compDirty { compDirty = false; compositeToFramebuffer() }
+        frame += 1
+        if frame % 9 == 0 { fb.snapshotPPM(to: "/tmp/x2go_fb.ppm") }   // PPM ~3fps for headless
+        Thread.sleep(forTimeInterval: 1.0 / 30.0)
+    }
 }
 
 // Headless input self-test: with no GUI/NSEvents, drive the injection path
