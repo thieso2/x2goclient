@@ -152,6 +152,41 @@ NX stream stays in sync. Then input events (KeyPress/ButtonPress/Motion) → nxp
 Status: native endpoint proven at the protocol level (real session connects +
 streams initial content); full desktop streaming is the remaining work.
 
+
+## Honest status (end of session)
+
+**Achieved (committed, with evidence):** a hand-written native **Swift X server**
+(`x2go-xserver`) that:
+- completes the X11 connection handshake (xdpyinfo / XOpenDisplay) — rung 1;
+- renders core drawing (PolyFillRectangle, PutImage, GC colors) to a framebuffer
+  presented via **Metal** in a native window, no XQuartz — rungs 2/3 + Metal;
+- has a **real X2Go session's nxproxy connect and "Establish"**, run
+  x2goruncommand, and stream **initial content (X11 logo via PutImage)** into our
+  framebuffer (docs/e2e-nxproxy-into-xserver.png).
+
+**Not yet working:** the **full XFCE desktop does not stream** — after the initial
+content the **NX peer link (nxproxy↔remote nxagent) breaks consistently**
+("Failure reading from the peer proxy") during/after nxagent's atom-intern flood.
+All reply-expecting requests we received were answered; the break is on the
+remote NX/SSH side. Resolving it requires: (a) complete X request/reply coverage
+with correct lengths (GetWindowAttributes len-3, GetImage, QueryColors,
+font/colormap queries) so nxproxy never blocks; (b) send the window/Map/Expose
+events nxagent expects; (c) harden the socket read/write loop; possibly (d) rule
+out the intermittent SSH-NX-tunnel instability seen independently. Then **input
+events** (KeyPress/ButtonPress/MotionNotify → nxproxy) for interactivity.
+
+So: the native NX endpoint is proven **at the protocol level** (real session
+connects + initial render via Metal, zero X11), but it is **not a fully working
+desktop client yet** — that's the remaining (substantial) work above.
+
+### Note: a fully-working path that already exists
+The earlier **capture bridge** (nxproxy → XQuartz → capture → Metal) already
+displayed the *complete* live XFCE desktop in a native Metal window
+(docs/e2e-native-metal.png); its only gap was input injection (XQuartz 2.8.5
+lacks XTEST). That path is "fully working display today, input via XQuartz 2.8.4
+or the native endpoint". The native endpoint here is the cleaner long-term
+no-X11 architecture, still being completed.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
