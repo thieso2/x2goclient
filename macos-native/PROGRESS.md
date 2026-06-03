@@ -383,10 +383,17 @@ before each run.
   events reach nxagent and the apps react (a panel-menu click makes nxagent
   render the applications menu, draw ops 39 → 105). GrabPointer/GrabKeyboard +
   ConfigureWindow(op12) track the input target and popup geometry.
-- 🔜 Remaining polish: transient/override-redirect **popup compositing** into the
-  framebuffer (menus render but aren't yet positioned pixel-correctly); rasterize
-  `CompositeGlyphs` (most text already arrives as PutImage, so the desktop is
-  legible); incremental damage-driven updates instead of full snapshots.
+- ✅ **Per-window compositor** (`Compositor.swift`): each window has its own BGRA
+  backing surface; the framebuffer is rebuilt by stacking all mapped, drawn
+  windows in z-order each frame (ConfigureWindow stack-mode honoured; InputOnly
+  and never-drawn wrapper windows skipped). Background redraws no longer clobber
+  popups, so menus/dialogs appear and persist. RENDER glyph text +
+  CreateSolidFill backgrounds render. `CAMetalDisplayLink` (macOS 14+) drives
+  presentation. Clicking the panel opens the Applications menu as a stacked
+  window; double/right-click stable.
+- 🔜 Remaining polish: a notification popup renders dark; in-menu glyph fidelity;
+  alpha-blended compositing for ARGB windows; incremental damage updates instead
+  of full-frame recomposite.
 
 ## Key finding
 
