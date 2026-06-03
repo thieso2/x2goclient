@@ -32,6 +32,10 @@ ssh -o BatchMode=yes -i "$KEY" "thies@$SERVER" '
   pkill -9 -u thies -f "dbus-daemon" 2>/dev/null
   sleep 1
   echo "   server clean; remaining desktop procs: $(pgrep -c -u thies -f "$P" 2>/dev/null || echo 0)"
+  # Configure preferred apps so panel/dock launchers (exo-open) actually start
+  # something; without this the launchers fail silently and apps never open.
+  mkdir -p ~/.config/xfce4
+  printf "TerminalEmulator=xfce4-terminal\nFileManager=Thunar\n" > ~/.config/xfce4/helpers.rc
 ' 2>/dev/null
 sleep 2
 

@@ -418,12 +418,13 @@ if ProcessInfo.processInfo.environment["X2GO_INPUTTEST"] != nil {
             injectButton(1, down: false, fx: x, fy: y)
         }
         FileHandle.standardError.write("=== INPUT-BEGIN === target win=\(inputWin) fd=\(inputFd)\n".data(using: .utf8)!)
-        // Click the application-menu / first dock icon to verify clicks register.
-        injectMotion(512, 775); Thread.sleep(forTimeInterval: 0.3)
-        clickLeft(512, 775)
-        Thread.sleep(forTimeInterval: 2.5)
-        compDumpStack("after-click")
-        fb.snapshotPPM(to: "/tmp/x2go_fb_click.ppm")
+        // Click each dock launcher icon; snapshot after each to see what opens.
+        for (i, x) in [512, 562, 612, 662, 712, 762].enumerated() {
+            clickLeft(x, 775)
+            Thread.sleep(forTimeInterval: 4.0)
+            compDumpStack("dock\(i)")
+            fb.snapshotPPM(to: "/tmp/x2go_fb_dock\(i).ppm")
+        }
         FileHandle.standardError.write("inputtest: snapshots written\n".data(using: .utf8)!)
     }
 }
