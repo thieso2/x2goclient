@@ -245,7 +245,8 @@ func foregroundFrom(_ r: inout ByteReader, mask: UInt32) -> (UInt8,UInt8,UInt8)?
 }
 FileHandle.standardError.write("x2go-xserver: listening on \(path) (DISPLAY=:\(displayNum)), \(FB_W)x\(FB_H)\n".data(using: .utf8)!)
 
-while true {
+func acceptLoop() {
+  while true {
     let cfd = accept(lfd, nil, nil)
     if cfd < 0 { continue }
     guard let lsb = readClientSetup(cfd) else { close(cfd); continue }
@@ -331,4 +332,16 @@ while true {
         .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
     FileHandle.standardError.write("client disconnected. unhandled: \(summary)\n".data(using: .utf8)!)
     close(cfd)
+  }
+}
+
+// Serve on a background thread; present the framebuffer via Metal on the main
+// thread. Pass --headless to skip the window (PPM dump only).
+let headless = CommandLine.arguments.contains("--headless")
+Thread.detachNewThread { acceptLoop() }
+if headless {
+    FileHandle.standardError.write("headless: framebuffer dumped to /tmp/x2go_fb.ppm\n".data(using: .utf8)!)
+    while true { Thread.sleep(forTimeInterval: 60) }
+} else {
+    runMetalApp(fb)
 }

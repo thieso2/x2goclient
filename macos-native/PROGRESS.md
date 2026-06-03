@@ -107,8 +107,13 @@ sufficient for nxagent/nxproxy, proven rung-by-rung against real X clients.
       PolyFillRectangle, PutImage(ZPixmap), ClearArea. A real X client drew
       three colored rects + an image and our server rendered them pixel-correct
       (docs/e2e-xserver-framebuffer.png). This framebuffer is the Metal surface.
-    - Next: present the framebuffer via Metal in the SwiftUI window; then point a
-      real session's nxproxy at `:77` (RENDER subset needed for full XFCE).
+    - Rung "Metal" ✓ — the X server now presents its framebuffer in a **native
+      macOS window via Metal** (CAMetalLayer + runtime MSL, in x2go-xserver).
+      A real X client drew into our server and the rectangles appear in the
+      native Metal window with **no XQuartz** (docs/e2e-xserver-metal-window.png).
+    - Remaining for full XFCE via nxproxy: implement the RENDER (Xrender) request
+      subset nxagent uses, more core requests (CreatePixmap/CopyArea/PolyText),
+      and input events back to nxproxy. Architecture + display path proven.
 
 ## Key finding
 
