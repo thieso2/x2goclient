@@ -26,13 +26,13 @@
 
 
 SVGFrame::SVGFrame ( QString fname,bool st,QWidget* parent,
-                     Qt::WFlags f ) :QFrame ( parent,f )
+                     Qt::WindowFlags f ) :QFrame ( parent,f )
 {
 	empty=false;
 #ifdef Q_OS_WIN
 	parentWidget=0;
 #endif
-	if ( fname==QString::null )
+	if ( fname==QString() )
 		empty=true;
 	if ( !empty )
 	{
@@ -59,14 +59,14 @@ SVGFrame::SVGFrame ( QString fname,bool st,QWidget* parent,
 			if ( renderer->animated() )
 			{
 				timer->start ( 1000/renderer->framesPerSecond() );
-				x2goDebug<<"Animated, fps:"<<renderer->framesPerSecond() <<endl;
+				x2goDebug<<"Animated, fps:"<<renderer->framesPerSecond() << "\n";
 			}
 		}
 	}
 }
 
 SVGFrame::SVGFrame ( QWidget* parent,
-                     Qt::WFlags f ) :QFrame ( parent,f )
+                     Qt::WindowFlags f ) :QFrame ( parent,f )
 {
 	repaint=false;
 	empty=true;
@@ -128,7 +128,7 @@ void SVGFrame::mousePressEvent ( QMouseEvent * event )
 			wapiGetBorders ( parentWidget->winId(), vBorder, hBorder, barHeight );
 		x2goDebug<<"svg frame: "<<event->pos() <<
 		":"<<mapFromGlobal ( event->pos() ) <<":"<<barHeight<<":"<<vBorder<<":"
-		<<hBorder<<":"<<pos() <<endl;
+		<<hBorder<<":"<<pos() << "\n";
 		QMouseEvent * nevent=new QMouseEvent(event->type(), QPoint(0,0),
 				event->button(), event-> buttons(), event->modifiers());
 		QFrame::mousePressEvent ( nevent );

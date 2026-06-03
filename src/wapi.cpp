@@ -227,10 +227,10 @@ void wapiSetWindowIcon ( HWND wnd, const QPixmap& icon)
     x2goDebug<<"Small icon: "<<smallIcon<<smallx<<"x"<<smally;
     int rez=SetClassLong(wnd,GCL_HICON, (LONG)largeIcon);
     if (!rez)
-        x2goDebug<<"ERROR: "<<GetLastError()<<endl;
+        x2goDebug<<"ERROR: "<<GetLastError()<< "\n";
     rez=SetClassLong(wnd,GCL_HICONSM,(LONG)smallIcon);
     if (!rez)
-        x2goDebug<<"ERROR: "<<GetLastError()<<endl;
+        x2goDebug<<"ERROR: "<<GetLastError()<< "\n";
     /*    ShowWindow(wnd, SW_HIDE);
         ShowWindow(wnd, SW_SHOW);*/
 }
@@ -243,7 +243,7 @@ QString wapiShortFileName ( const QString& longName )
     length = GetShortPathName ( ( LPCTSTR ) longName.utf16(), NULL, 0 );
     if ( !length )
     {
-        return QString::null;
+        return QString();
     }
 
     buffer = new TCHAR[length];
@@ -252,7 +252,7 @@ QString wapiShortFileName ( const QString& longName )
     if ( !length )
     {
         delete []buffer;
-        return QString::null;
+        return QString();
     }
     QString spath=QString::fromUtf16 ( ( const ushort* ) buffer );
     delete []buffer;
@@ -304,7 +304,7 @@ QString getNameFromSid ( PSID psid, QString* systemName )
                        name,&length,sysName,&dlength,&eUse );
     if ( !length )
     {
-        return QString::null;
+        return QString();
     }
 
     name=new TCHAR[length];
@@ -316,7 +316,7 @@ QString getNameFromSid ( PSID psid, QString* systemName )
     {
         delete []name;
         delete []sysName;
-        return QString::null;
+        return QString();
     }
 
     QString strName=QString::fromUtf16 (
@@ -444,7 +444,7 @@ void wapiShellExecute ( const QString& operation, const QString& file,
                         const QString& parameters,
                         const QString& dir, HWND win )
 {
-    if ( parameters==QString::null )
+    if ( parameters==QString() )
         ShellExecute ( win, ( LPCTSTR ) ( operation.utf16() ),
                        ( LPCTSTR ) ( file.utf16() ),0,
                        ( LPCTSTR ) ( dir.utf16() ),SW_SHOWNORMAL );
@@ -461,13 +461,13 @@ QString wapiGetDefaultPrinter()
     DWORD length;
     GetDefaultPrinter ( 0,&length );
     if ( !length )
-        return QString::null;
+        return QString();
     prName=new TCHAR[length];
     GetDefaultPrinter ( prName,&length );
     if ( !length )
     {
         delete []prName;
-        return QString::null;
+        return QString();
     }
     QString printer=QString::fromUtf16 ( ( const ushort* ) prName );
     delete []prName;
@@ -514,7 +514,7 @@ QString wapiGetUserName()
     TCHAR  infoBuf[INFO_BUFFER_SIZE];
     DWORD bufCharCount=INFO_BUFFER_SIZE;
     if( !GetUserName( infoBuf, &bufCharCount ) )
-        return QString::null;
+        return QString();
     return QString::fromUtf16 ( ( const ushort* ) infoBuf);
 }
 #endif

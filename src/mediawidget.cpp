@@ -28,7 +28,7 @@
 #include "x2gosettings.h"
 #include <QDir>
 #include <QApplication>
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 #include <QTimer>
 #include <QSplashScreen>
 #include "x2gologdebug.h"
@@ -115,7 +115,7 @@ MediaWidget::MediaWidget ( QString id, ONMainWindow * mw,
 
     connect ( sound,SIGNAL ( toggled ( bool ) ),this,
               SLOT ( slot_sndToggled ( bool ) ) );
-    connect ( sndsys,SIGNAL ( buttonClicked ( int ) ),this,
+    connect ( sndsys,SIGNAL(idClicked(int)),this,
               SLOT ( slot_sndSysSelected ( int ) ) );
     connect ( rbStartSnd,SIGNAL ( clicked ( ) ),this,
               SLOT ( slot_sndStartClicked() ) );

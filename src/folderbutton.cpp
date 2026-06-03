@@ -29,7 +29,7 @@
 #include "onmainwindow.h"
 #include "x2gologdebug.h"
 #include <QApplication>
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 #include "sessionexplorer.h"
 #include <QMouseEvent>
 
@@ -109,7 +109,7 @@ void FolderButton::loadIcon()
     QString sessIcon=":/img/icons/128x128/folder.png";
     QPixmap* pix;
 
-    QString normPath=(path+"/"+name).split("/",QString::SkipEmptyParts).join("::");
+    QString normPath=(path+"/"+name).split("/",Qt::SkipEmptyParts).join("::");
 
     QByteArray picture = QByteArray::fromBase64( st->setting()->value ( "icon_"+normPath,
                        ( QVariant )QString()).toString().toLocal8Bit());

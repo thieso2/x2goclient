@@ -125,7 +125,7 @@ void SshProcess::tunnelLoop()
     if (serverSocket<=0)
     {
         QString err=tr("Error creating socket.");
-        x2goDebug<<err<<endl;
+        x2goDebug<<err<< "\n";
         emit sshFinished(false,err,pid);
         return;
     }
@@ -140,10 +140,10 @@ void SshProcess::tunnelLoop()
     address.sin_family=AF_INET;
     address.sin_addr.s_addr=INADDR_ANY;
     address.sin_port=htons(localPort);
-    if (bind(serverSocket,(struct sockaddr*) &address,sizeof(address))!=0)
+    if (::bind(serverSocket,(struct sockaddr*) &address,sizeof(address))!=0)
     {
         QString err=tr("Error binding ")+localHost+":"+QString::number(localPort);
-        x2goDebug<<err<<endl;
+        x2goDebug<<err<< "\n";
         emit sshFinished(false,err,pid);
         return;
     }
@@ -283,7 +283,7 @@ void SshProcess::startNormal(const QString& cmd)
         {
             stdErrString=proc->errorString();
 #ifdef DEBUG
-            //x2goDebug<<"ssh start failed:" <<stdErrString<<endl;
+            //x2goDebug<<"ssh start failed:" <<stdErrString<< "\n";
 #endif
             slotChannelClosed(this, uuidStr);
             return;
@@ -347,7 +347,7 @@ void SshProcess::start_cp(QString src, QString dst)
 #ifdef DEBUG
         x2goDebug<<"Running scp:" <<sshString;
 #endif
-        proc->start(sshString);
+        proc->startCommand(sshString);
 
         if (!proc->waitForStarted(15000))
         {
@@ -369,7 +369,7 @@ void SshProcess::start_cp(QString src, QString dst)
 void SshProcess::startTunnel(const QString& forwardHost, uint forwardPort, const QString& localHost,
                              uint localPort, bool reverse)
 {
-    x2goDebug<<"Starting tunnel via SshProcess object "<<pid<<": "<<forwardHost<<":"<<forwardPort<<" -> "<<localHost<<":"<<localPort<<endl;
+    x2goDebug<<"Starting tunnel via SshProcess object "<<pid<<": "<<forwardHost<<":"<<forwardPort<<" -> "<<localHost<<":"<<localPort<< "\n";
 
     tunnel=true;
     tunnelOkEmited=false;
@@ -388,7 +388,7 @@ void SshProcess::startTunnel(const QString& forwardHost, uint forwardPort, const
 #ifdef Q_OS_WIN
         QString sshString="plink -batch -P "+
 #else
-        QString sshString=QString::null+"ssh"+ KEEPALIVE_OPTION +"-o GSSApiAuthentication=yes -o PasswordAuthentication=no -o PubkeyAuthentication=no -p "+
+        QString sshString=QString()+"ssh"+ KEEPALIVE_OPTION +"-o GSSApiAuthentication=yes -o PasswordAuthentication=no -o PubkeyAuthentication=no -p "+
 #endif
                           QString::number(masterCon->getPort())+" "+
                           masterCon->getUser()+"@"+
@@ -401,7 +401,7 @@ void SshProcess::startTunnel(const QString& forwardHost, uint forwardPort, const
 #ifdef DEBUG
         x2goDebug<<"Tunnel: running ssh:" <<sshString;
 #endif
-        proc->start(sshString);
+        proc->startCommand(sshString);
 
         if (!proc->waitForStarted(5000))
         {
@@ -424,7 +424,7 @@ void SshProcess::slotStdErr(SshProcess* creator, QByteArray data)
     if (creator!=this)
         return;
 #ifdef DEBUG
-//     x2goDebug<<"new err data:"<<data<<endl;
+//     x2goDebug<<"new err data:"<<data<< "\n";
 #endif
     stdErrString+=data;
 
@@ -449,7 +449,7 @@ void SshProcess::slotStdOut(SshProcess* creator, QByteArray data)
 {
     if (creator!=this)
         return;
-//     x2goDebug<<"new data"<<data<<endl;
+//     x2goDebug<<"new data"<<data<< "\n";
     stdOutString+=data;
 }
 

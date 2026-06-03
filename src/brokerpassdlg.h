@@ -26,7 +26,7 @@ class BrokerPassDlg: public QDialog, private Ui_BrokerPassDialogUi
 {
     Q_OBJECT
 public:
-    BrokerPassDlg(QWidget* parent = 0, Qt::WindowFlags f = 0);
+    BrokerPassDlg(QWidget* parent = 0, Qt::WindowFlags f = Qt::WindowFlags());
     virtual ~BrokerPassDlg();
     virtual void accept();
     virtual void reject();

@@ -21,7 +21,7 @@
 BrokerPassDlg::BrokerPassDlg(QWidget* parent, Qt::WindowFlags f): QDialog(parent, f)
 {
     setupUi(this);
-    statusLabel->setText(QString::null);
+    statusLabel->setText(QString());
     buttonBox->button(QDialogButtonBox::Ok)->setEnabled(false);
 }
 
@@ -41,7 +41,7 @@ void BrokerPassDlg::slotPassChanged()
     else
     {
         passEq=true;
-        statusLabel->setText(QString::null);
+        statusLabel->setText(QString());
     }
     buttonBox->button(QDialogButtonBox::Ok)->setEnabled(passEq &&
             lePass1->text().size()>0 &&

@@ -149,7 +149,7 @@ void ConTest::slotError(QAbstractSocket::SocketError socketError)
     else
         error=socket->errorString();
 
-    x2goDebug<<"Error: "<<error<<endl;
+    x2goDebug<<"Error: "<<error<< "\n";
     timer->stop();
     QPalette pal=lhttps->palette();
     pal.setColor(QPalette::WindowText, Qt::red);

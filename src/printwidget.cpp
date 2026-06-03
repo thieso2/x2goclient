@@ -23,6 +23,7 @@
 #include "x2gosettings.h"
 #include "x2gologdebug.h"
 #include <QDir>
+#include <QButtonGroup>
 #ifdef Q_OS_WIN
 #include "wapi.h"
 #endif
@@ -126,7 +127,7 @@ void PrintWidget::loadSettings()
 	bool isGsViewInstalled=gsViewInfo ( ver,gsvpath );
 	if ( prcmd=="" && ! ( isGsInstalled && isGsViewInstalled ) )
 	{
-// 		x2goDebug<<"fallback to view"<<endl;
+// 		x2goDebug<<"fallback to view"<< "\n";
 // 		pdfView=true;
 	}
 	else if ( prcmd=="" )

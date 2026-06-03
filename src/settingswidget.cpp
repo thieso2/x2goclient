@@ -28,7 +28,7 @@
 #include "x2gosettings.h"
 #include <QDir>
 #include <QApplication>
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 #include <QTimer>
 #include <QSplashScreen>
 #include "x2gologdebug.h"
@@ -38,7 +38,7 @@ SettingsWidget::SettingsWidget ( QString id, ONMainWindow * mw,
                                  QWidget * parent, Qt::WindowFlags f )
     : ConfigWidget ( id,mw,parent,f )
 {
-    multiDisp=(QApplication::desktop()->screenCount()>1);
+    multiDisp=(x2go::desktop()->screenCount()>1);
 #ifdef Q_WS_HILDON
     QTabWidget* tabSettings=new QTabWidget ( this );
     QFrame* dgb=new QFrame();
@@ -114,7 +114,7 @@ SettingsWidget::SettingsWidget ( QString id, ONMainWindow * mw,
     lDisplay->setBuddy(displayNumber);
 
     displayNumber->setMinimum(1);
-    displayNumber->setMaximum(QApplication::desktop()->screenCount());
+    displayNumber->setMaximum(x2go::desktop()->screenCount());
     if (!multiDisp)
     {
         displayNumber->hide();
@@ -223,8 +223,8 @@ SettingsWidget::SettingsWidget ( QString id, ONMainWindow * mw,
     params=new QLineEdit(rdpBox);
     rdpLay->addWidget(cmdLine,4,0,1,2);
     rdpLay->addWidget(params,3,1);
-    connect (rClient, SIGNAL(buttonClicked(int)), this, SLOT(updateCmdLine()));
-    connect (radio, SIGNAL(buttonClicked(int)), this, SLOT(updateCmdLine()));
+    connect (rClient, SIGNAL(idClicked(int)), this, SLOT(updateCmdLine()));
+    connect (radio, SIGNAL(idClicked(int)), this, SLOT(updateCmdLine()));
     connect (params, SIGNAL(textChanged(QString)), this, SLOT(updateCmdLine()));
     connect (width, SIGNAL(valueChanged(int)), this, SLOT(updateCmdLine()));
     connect (height, SIGNAL(valueChanged(int)), this, SLOT(updateCmdLine()));
@@ -314,7 +314,7 @@ void SettingsWidget::slot_identDisplays()
 {
     pbIdentDisp->setEnabled(false);
     identWins.clear();
-    for (int i=0; i<QApplication::desktop()->screenCount(); ++i)
+    for (int i=0; i<x2go::desktop()->screenCount(); ++i)
     {
         QMainWindow *mw=new QMainWindow(
             this, Qt::FramelessWindowHint|Qt::X11BypassWindowManagerHint|Qt::WindowStaysOnTopHint);
@@ -327,7 +327,7 @@ void SettingsWidget::slot_identDisplays()
         fr->setAlignment(Qt::AlignCenter);
         mw->setCentralWidget(fr);
         fr->setFrameStyle(QFrame::Box);
-        QRect geom=QApplication::desktop()->screenGeometry(i);
+        QRect geom=x2go::desktop()->screenGeometry(i);
         int x_pos=geom.width()/2-75;
         int y_pos=geom.height()/2-100;
         x_pos=565;
@@ -554,8 +554,8 @@ void SettingsWidget::saveSettings()
         int selectedScreen = st.setting()->value(sessionId + "/display", (QVariant) -1).toInt();
 
         //get max available desktop area for selected screen
-        int height = QApplication::desktop()->availableGeometry(selectedScreen).height();
-        int width = QApplication::desktop()->availableGeometry(selectedScreen).width();
+        int height = x2go::desktop()->availableGeometry(selectedScreen).height();
+        int width = x2go::desktop()->availableGeometry(selectedScreen).width();
 
         //save max resolution
         st.setting()->setValue (sessionId + "/width", (QVariant) width);

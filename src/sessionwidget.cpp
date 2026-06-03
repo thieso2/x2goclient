@@ -44,13 +44,13 @@ SessionWidget::SessionWidget ( bool newSession, QString id, ONMainWindow * mw,
 {
     QVBoxLayout* sessLay=new QVBoxLayout ( this );
 #ifdef Q_WS_HILDON
-    sessLay->setMargin ( 2 );
+    sessLay->setContentsMargins(2, 2, 2, 2);
 #endif
     this->parent=mw;
     this->newSession=newSession;
 
     sessName=new QLineEdit ( this );
-    icon=new QPushButton ( QString::null,this );
+    icon=new QPushButton ( QString(),this );
     if ( !miniMode )
     {
         icon->setIconSize ( QSize ( 100,100 ) );
@@ -102,12 +102,12 @@ SessionWidget::SessionWidget ( bool newSession, QString id, ONMainWindow * mw,
     openKey=new QPushButton (
         QIcon ( mainWindow->iconsPath (
                     "/32x32/file-open.png" ) ),
-        QString::null,sgb );
+        QString(),sgb );
     QVBoxLayout *sgbLay = new QVBoxLayout ( sgb );
 #else
     QPushButton* openKey=new QPushButton (
         QIcon ( mainWindow->iconsPath ( "/16x16/file-open.png" ) ),
-        QString::null,sgb );
+        QString(),sgb );
     QVBoxLayout *sgbLay = new QVBoxLayout ();
 #endif
     QHBoxLayout *suLay =new QHBoxLayout();
@@ -167,7 +167,7 @@ SessionWidget::SessionWidget ( bool newSession, QString id, ONMainWindow * mw,
     proxyKey=new QLineEdit(proxyBox);
     pbOpenProxyKey=new QPushButton (
         QIcon ( mainWindow->iconsPath ( "/16x16/file-open.png" ) ),
-        QString::null,proxyBox );
+        QString(),proxyBox );
     cbProxyAutologin=new QCheckBox(tr("SSH Agent or default SSH key"),proxyBox);
     cbProxyKrbLogin=new QCheckBox(tr("Kerberos 5 (GSSAPI) authentication"),proxyBox);
 
@@ -286,7 +286,7 @@ SessionWidget::SessionWidget ( bool newSession, QString id, ONMainWindow * mw,
 #endif
 
     connect ( pbOpenProxyKey,SIGNAL ( clicked() ),this,SLOT ( slot_proxyGetKey()) );
-    connect ( proxyType, SIGNAL ( buttonClicked(int)) ,this,SLOT ( slot_proxyType()));
+    connect ( proxyType, SIGNAL(idClicked(int)) ,this,SLOT ( slot_proxyType()));
     connect (cbProxy, SIGNAL(clicked(bool)), this, SLOT(slot_proxyOptions()));
     connect (cbProxySameUser, SIGNAL(clicked(bool)), this, SLOT(slot_proxySameLogin()));
     connect ( pathButton, SIGNAL(clicked(bool)), this, SLOT(slot_openFolder()));
@@ -315,7 +315,7 @@ void SessionWidget::slot_proxyGetKey()
                tr ( "Open key file" ),
                startDir,
                tr ( "All files" ) +" (*)" );
-    if ( path!=QString::null )
+    if ( path!=QString() )
     {
 #ifdef Q_OS_WIN
         if ( ONMainWindow::getPortable() &&
@@ -407,7 +407,7 @@ void SessionWidget::slot_getIcon()
                       tr ( "Open picture" ),
                       QDir::homePath(),
                       tr ( "Pictures" ) +" (*.png *.xpm *.jpg)" );
-    if ( path!=QString::null )
+    if ( path!=QString() )
     {
         sessIcon = wrap_legacy_resource_URIs (path);
         icon->setIcon ( QIcon ( sessIcon ) );
@@ -430,7 +430,7 @@ void SessionWidget::slot_getKey()
                tr ( "Open key file" ),
                startDir,
                tr ( "All files" ) +" (*)" );
-    if ( path!=QString::null )
+    if ( path!=QString() )
     {
 #ifdef Q_OS_WIN
         if ( ONMainWindow::getPortable() &&
@@ -531,7 +531,7 @@ void SessionWidget::readConfig()
                      sessionId+"/name",
                      ( QVariant ) tr ( "New session" ) ).toString().trimmed();
 
-    QStringList tails=name.split("/",QString::SkipEmptyParts);
+    QStringList tails=name.split("/",Qt::SkipEmptyParts);
     QString path;
     if(tails.count()>0)
     {
@@ -553,13 +553,13 @@ void SessionWidget::readConfig()
 
     server->setText ( st.setting()->value (
                           sessionId+"/host",
-                          ( QVariant ) QString::null ).toString().trimmed() );
+                          ( QVariant ) QString() ).toString().trimmed() );
     uname->setText ( st.setting()->value (
                          sessionId+"/user",
-                         ( QVariant ) QString::null ).toString().trimmed() );
+                         ( QVariant ) QString() ).toString().trimmed() );
     key->setText ( st.setting()->value (
                        sessionId+"/key",
-                       ( QVariant ) QString::null ).toString().trimmed() );
+                       ( QVariant ) QString() ).toString().trimmed() );
     cbAutoLogin->setChecked(st.setting()->value (
                                 sessionId+"/autologin",
                                 ( QVariant ) false ).toBool());
@@ -792,7 +792,7 @@ void SessionWidget::setDefaults()
     rbSshProxy->setChecked(true);
 
 
-    proxyKey->setText(QString::null);
+    proxyKey->setText(QString());
 
 
     proxyPort->setValue(22);
@@ -814,7 +814,7 @@ void SessionWidget::saveSettings()
 
     X2goSettings st ( "sessions" );
 
-    QString normPath=(lPath->text()+"/"+sessName->text()).split("/",QString::SkipEmptyParts).join("/");
+    QString normPath=(lPath->text()+"/"+sessName->text()).split("/",Qt::SkipEmptyParts).join("/");
 
     st.setting()->setValue ( sessionId+"/name",
                              ( QVariant ) normPath.trimmed() );

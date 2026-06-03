@@ -59,7 +59,7 @@ ShareWidget::ShareWidget ( QString id, ONMainWindow * mw,
 
     QPushButton* openDir=new QPushButton (
         QIcon ( mainWindow->iconsPath ( "/16x16/file-open.png" ) ),
-        QString::null,egb );
+        QString(),egb );
 
     QPushButton* addDir=new QPushButton ( tr ( "Add" ),egb );
     QPushButton* delDir=new QPushButton ( tr ( "Delete" ),egb );
@@ -134,7 +134,7 @@ ShareWidget::ShareWidget ( QString id, ONMainWindow * mw,
     expTv->setModel ( ( QAbstractItemModel* ) model );
     QFontMetrics fm1 ( expTv->font() );
     expTv->header()->resizeSection ( 1,
-                                     fm1.width ( tr ( "Automount" ) ) +10 );
+                                     fm1.horizontalAdvance( tr ( "Automount" ) ) +10 );
     connect ( openDir,SIGNAL ( clicked() ),this,SLOT ( slot_openDir() ) );
     connect ( addDir,SIGNAL ( clicked() ),this,SLOT ( slot_addDir() ) );
     connect ( delDir,SIGNAL ( clicked() ),this,SLOT ( slot_delDir() ) );
@@ -163,7 +163,7 @@ void ShareWidget::slot_openDir()
                       this,
                       tr ( "Select folder" ),
                       startDir );
-    if ( path!=QString::null )
+    if ( path!=QString() )
     {
 #ifdef Q_OS_WIN
         if ( ONMainWindow::getPortable() &&
@@ -205,7 +205,7 @@ void ShareWidget::slot_addDir()
     item= new QStandardItem();
     item->setCheckable ( true );
     model->setItem ( model->rowCount()-1,1,item );
-    ldir->setText ( QString::null );
+    ldir->setText ( QString() );
 }
 
 
@@ -221,11 +221,11 @@ void ShareWidget::readConfig()
     X2goSettings st ( "sessions" );
 
     QString exportDir=st.setting()->value ( sessionId+"/export",
-                                            ( QVariant ) QString::null ).toString();
+                                            ( QVariant ) QString() ).toString();
 
     cbFsSshTun->setChecked ( st.setting()->value ( sessionId+"/fstunnel",
                              true ).toBool() );
-    QStringList lst=exportDir.split ( ";",QString::SkipEmptyParts );
+    QStringList lst=exportDir.split ( ";",Qt::SkipEmptyParts );
 
     QString toCode=st.setting()->value ( sessionId+"/iconvto",
                                          ( QVariant ) "UTF-8" ).toString();
@@ -261,9 +261,9 @@ void ShareWidget::readConfig()
     for ( int i=0; i<lst.size(); ++i )
     {
 #ifndef Q_OS_WIN
-        QStringList tails=lst[i].split ( ":",QString::SkipEmptyParts );
+        QStringList tails=lst[i].split ( ":",Qt::SkipEmptyParts );
 #else
-        QStringList tails=lst[i].split ( "#",QString::SkipEmptyParts );
+        QStringList tails=lst[i].split ( "#",Qt::SkipEmptyParts );
 #endif
         QStandardItem *item;
         item= new QStandardItem ( tails[0] );

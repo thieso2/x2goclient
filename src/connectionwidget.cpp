@@ -67,8 +67,8 @@ ConnectionWidget::ConnectionWidget ( QString id, ONMainWindow * mw,
 	spdLay->addLayout ( slideLay );
 	spdLay->addLayout ( tickLay );
 	QFontMetrics fm ( mlab->font() );
-	slideLay->insertSpacing ( 0,fm.width ( "MODEM" ) /2 );
-	slideLay->addSpacing ( fm.width ( "LAN" ) /2 );
+	slideLay->insertSpacing ( 0,fm.horizontalAdvance( "MODEM" ) /2 );
+	slideLay->addSpacing ( fm.horizontalAdvance( "LAN" ) /2 );
 
 #ifndef Q_WS_HILDON
 	QGroupBox* compr=new QGroupBox ( tr ( "C&ompression" ),this );
@@ -109,7 +109,7 @@ ConnectionWidget::ConnectionWidget ( QString id, ONMainWindow * mw,
 #endif
 	connLay->addStretch();
 
-	connect ( packMethode,SIGNAL ( activated ( const QString& ) ),this,
+	connect ( packMethode,SIGNAL ( textActivated ( const QString& ) ),this,
 	          SLOT ( slot_changePack ( const QString& ) ) );
 	readConfig();
 }

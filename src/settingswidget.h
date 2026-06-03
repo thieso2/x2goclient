@@ -39,7 +39,7 @@ class SettingsWidget : public ConfigWidget
     Q_OBJECT
 public:
     SettingsWidget ( QString id, ONMainWindow * mw,
-                     QWidget * parent=0, Qt::WindowFlags f=0 );
+                     QWidget * parent=0, Qt::WindowFlags f=Qt::WindowFlags() );
     ~SettingsWidget();
     void setDefaults();
     void saveSettings();

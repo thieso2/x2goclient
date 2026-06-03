@@ -39,7 +39,7 @@ public:
         return sid;
     }
     void redraw();
-    const QPixmap* sessIcon() {
+    QPixmap sessIcon() {
         return icon->pixmap();
     }
     static bool lessThen ( const SessionButton* b1, const SessionButton* b2 );

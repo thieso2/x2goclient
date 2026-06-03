@@ -35,7 +35,7 @@
 #define SESSIONIDROLE Qt::UserRole+2
 
 SessionManageDialog::SessionManageDialog ( QWidget * parent,
-        bool onlyCreateIcon, Qt::WFlags f )
+        bool onlyCreateIcon, Qt::WindowFlags f )
     : QDialog ( parent, f )
 {
     QVBoxLayout* ml=new QVBoxLayout ( this );
@@ -173,8 +173,8 @@ void SessionManageDialog::initFolders(QTreeWidgetItem* parent, QString path)
         {
             QTreeWidgetItem* it=new QTreeWidgetItem(parent);
             it->setText(0,b->getName());
-            it->setIcon(0, QIcon(*(b->folderIcon())));
-            QString normPath=(b->getPath()+"/"+b->getName()).split("/",QString::SkipEmptyParts).join("/");
+            it->setIcon(0, QIcon(b->folderIcon()));
+            QString normPath=(b->getPath()+"/"+b->getName()).split("/",Qt::SkipEmptyParts).join("/");
             it->setData(0,Qt::UserRole, normPath+"/");
             it->setData(0, SESSIONROLE , false);
             initFolders(it, normPath);
@@ -187,8 +187,8 @@ void SessionManageDialog::initFolders(QTreeWidgetItem* parent, QString path)
         {
             QTreeWidgetItem* it=new QTreeWidgetItem(parent);
             it->setText(0,s->name());
-            it->setIcon(0, QIcon(*(s->sessIcon())));
-            QString normPath=(s->getPath()+"/"+s->name()).split("/",QString::SkipEmptyParts).join("/");
+            it->setIcon(0, QIcon(s->sessIcon()));
+            QString normPath=(s->getPath()+"/"+s->name()).split("/",Qt::SkipEmptyParts).join("/");
             it->setData(0,Qt::UserRole, normPath+"/");
             it->setData(0, SESSIONROLE, true);
             it->setData(0, SESSIONIDROLE, i);
@@ -208,7 +208,7 @@ void SessionManageDialog::slot_endisable ( QTreeWidgetItem* item, int col)
     if(!isSess)
     {
         if(item)
-            currentPath=item->data(0,Qt::UserRole).toString().split("/",QString::SkipEmptyParts).join("/");
+            currentPath=item->data(0,Qt::UserRole).toString().split("/",Qt::SkipEmptyParts).join("/");
         else
 	    currentPath="/";
         x2goDebug << "slot_endisable: no session, currentPath(?): " << currentPath;

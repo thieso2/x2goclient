@@ -32,7 +32,7 @@
 #include "onmainwindow.h"
 #include "x2gologdebug.h"
 #include <QApplication>
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 #include "sessionexplorer.h"
 
 
@@ -223,9 +223,9 @@ SessionButton::SessionButton ( ONMainWindow* mw,QWidget *parent, QString id )
     soundIcon->setFixedSize ( 16,16 );
     redraw();
 
-    connect ( cmdBox,SIGNAL ( activated ( const QString& ) ),this,
+    connect ( cmdBox,SIGNAL ( textActivated ( const QString& ) ),this,
               SLOT ( slot_cmd_change ( const QString& ) ) );
-    connect ( geomBox,SIGNAL ( activated ( const QString& ) ),this,
+    connect ( geomBox,SIGNAL ( textActivated ( const QString& ) ),this,
               SLOT ( slot_geom_change ( const QString& ) ) );
 
     editBut->setFocusPolicy ( Qt::NoFocus );
@@ -290,7 +290,7 @@ void SessionButton::redraw()
                                         ( QVariant ) tr ( "New Session" ) ).toString();
 
 
-    QStringList tails=name.split("/",QString::SkipEmptyParts);
+    QStringList tails=name.split("/",Qt::SkipEmptyParts);
     if(tails.count()>0)
     {
         name=tails.last();
@@ -306,7 +306,7 @@ void SessionButton::redraw()
     sessName->setToolTip(nameofSession);
 
     QString status=st->setting()->value ( sid+"/status",
-                                          ( QVariant ) QString::null ).toString();
+                                          ( QVariant ) QString() ).toString();
     if (status == "R")
     {
         sessStatus->setText("("+tr("running")+")");
@@ -322,13 +322,13 @@ void SessionButton::redraw()
     sessIcon = expandHome(sessIcon);
     QPixmap* pix;
 
-    x2goDebug << "Creating QPixmap with session icon: " << sessIcon.toAscii () << ".";
+    x2goDebug << "Creating QPixmap with session icon: " << sessIcon.toLatin1 () << ".";
     if (!par->brokerMode || sessIcon == ":/img/icons/128x128/x2gosession.png")
         pix=new QPixmap( sessIcon );
     else
     {
         pix=new QPixmap;
-        pix->loadFromData(QByteArray::fromBase64(sessIcon.toAscii()));
+        pix->loadFromData(QByteArray::fromBase64(sessIcon.toLatin1()));
     }
     if ( !par->retMiniMode() )
         icon->setPixmap ( pix->scaled ( 64,64,Qt::IgnoreAspectRatio,
@@ -339,9 +339,9 @@ void SessionButton::redraw()
 
     delete pix;
     QString sv=st->setting()->value ( sid+"/host", ( QVariant )
-                                      QString::null ).toString();
+                                      QString() ).toString();
     QString uname=st->setting()->value ( sid+"/user", ( QVariant )
-                                         QString::null ).toString();
+                                         QString() ).toString();
     server->setText ( uname+"@"+sv );
 
     QString command=st->setting()->value ( sid+"/command",
@@ -474,14 +474,14 @@ void SessionButton::redraw()
 
     geomBox->clear();
     geomBox->addItem ( tr ( "fullscreen" ) );
-    uint displays=QApplication::desktop()->numScreens();
+    uint displays=x2go::desktop()->numScreens();
     if (!directRDP)
         for (uint i=0; i<displays; ++i)
         {
             geomBox->addItem ( tr( "Display " )+QString::number(i+1));
 
             //add maximun available area
-            geomBox->addItem( QString::number(QApplication::desktop()->availableGeometry(i).width()) + "x" + QString::number(QApplication::desktop()->availableGeometry(i).height()));
+            geomBox->addItem( QString::number(x2go::desktop()->availableGeometry(i).width()) + "x" + QString::number(x2go::desktop()->availableGeometry(i).height()));
 
 
         }

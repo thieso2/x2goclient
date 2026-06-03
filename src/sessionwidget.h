@@ -36,7 +36,7 @@ class SessionWidget : public ConfigWidget
     Q_OBJECT
 public:
     SessionWidget ( bool newSession, QString id, ONMainWindow * mv,
-                    QWidget * parent = 0, Qt::WindowFlags f = 0 );
+                    QWidget * parent = 0, Qt::WindowFlags f = Qt::WindowFlags() );
     ~SessionWidget();
     void setDefaults();
     void saveSettings();

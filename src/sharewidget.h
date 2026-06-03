@@ -34,7 +34,7 @@ class ShareWidget : public ConfigWidget
 		Q_OBJECT
 	public:
 		ShareWidget ( QString id, ONMainWindow * mw,
-		              QWidget * parent=0, Qt::WindowFlags f=0 );
+		              QWidget * parent=0, Qt::WindowFlags f=Qt::WindowFlags() );
 		~ShareWidget();
 		void setDefaults();
 		void saveSettings();

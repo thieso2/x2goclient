@@ -47,7 +47,7 @@
 #include <QProcess>
 #include <QGroupBox>
 #include <QTextEdit>
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 #include <QLineEdit>
 #include <QLabel>
 #include <QScrollArea>
@@ -67,10 +67,9 @@
 #include <QCheckBox>
 #include <QTemporaryFile>
 #include <QFileDialog>
-#include <QHttp>
 #include <QUrl>
 #include <QLocalSocket>
-#include <QPlastiqueStyle>
+#include <QStyleFactory>
 #include "imgframe.h"
 #include <QToolTip>
 #include "clicklineedit.h"
@@ -96,7 +95,7 @@
 
 #include <QCoreApplication>
 
-#include <QDesktopWidget>
+#include "qdesktopwidget_compat.h"
 
 #define ldap_SUCCESS 0
 #define ldap_INITERROR 1

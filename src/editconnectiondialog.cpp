@@ -30,12 +30,12 @@
 #include "mediawidget.h"
 
 EditConnectionDialog::EditConnectionDialog ( bool newSession, QString id, QWidget * par,
-        int ind,Qt::WFlags f )
+        int ind,Qt::WindowFlags f )
         : QDialog ( par,f )
 {
     QVBoxLayout* ml=new QVBoxLayout ( this );
 #ifdef Q_WS_HILDON
-    ml->setMargin ( 2 );
+    ml->setContentsMargins(2, 2, 2, 2);
 #endif
     fr=new QTabWidget ( this );
     ml->addWidget ( fr );
@@ -74,7 +74,7 @@ EditConnectionDialog::EditConnectionDialog ( bool newSession, QString id, QWidge
     bLay->addWidget ( def );
     ml->addLayout ( bLay );
 #ifdef Q_WS_HILDON
-    bLay->setMargin ( 2 );
+    bLay->setContentsMargins(2, 2, 2, 2);
 #endif
 
     setSizeGripEnabled ( true );

@@ -35,7 +35,7 @@
 #include <signal.h>
 #endif
 
-#include <QPlastiqueStyle>
+#include <QStyleFactory>
 #include <QMessageBox>
 #include <iostream>
 #include <QFile>
@@ -51,7 +51,7 @@ int x2goMain ( int argc, char *argv[] )
 
 #ifndef Q_WS_HILDON
 #ifdef Q_OS_LINUX
-    app.setStyle ( new QPlastiqueStyle() );
+    app.setStyle ( QStyleFactory::create("Fusion") );
 #endif
 #endif
     QStringList args;

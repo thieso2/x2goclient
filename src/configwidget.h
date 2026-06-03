@@ -29,7 +29,7 @@ class ConfigWidget : public QFrame
 {
 	public:
 		ConfigWidget ( QString id, ONMainWindow * mv,
-		               QWidget * parent = 0, Qt::WindowFlags f = 0 );
+		               QWidget * parent = 0, Qt::WindowFlags f = Qt::WindowFlags() );
 
 		~ConfigWidget();
 	protected:

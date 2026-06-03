@@ -32,7 +32,7 @@
 #include <QFileDialog>
 #include "sessionexplorer.h"
 
-ExportDialog::ExportDialog ( QString sid,QWidget * par, Qt::WFlags f )
+ExportDialog::ExportDialog ( QString sid,QWidget * par, Qt::WindowFlags f )
     : QDialog ( par,f )
 {
     sessionId=sid;
@@ -108,15 +108,15 @@ void ExportDialog::loadSessions()
 
 
     QString exports=st.setting()->value ( sessionId+"/export",
-                                          ( QVariant ) QString::null ).toString();
+                                          ( QVariant ) QString() ).toString();
 
-    QStringList lst=exports.split ( ";",QString::SkipEmptyParts );
+    QStringList lst=exports.split ( ";",Qt::SkipEmptyParts );
     for ( int i=0; i<lst.size(); ++i )
     {
 #ifndef Q_OS_WIN
-        QStringList tails=lst[i].split ( ":",QString::SkipEmptyParts );
+        QStringList tails=lst[i].split ( ":",Qt::SkipEmptyParts );
 #else
-        QStringList tails=lst[i].split ( "#",QString::SkipEmptyParts );
+        QStringList tails=lst[i].split ( "#",Qt::SkipEmptyParts );
 #endif
         dirs<<tails[0];
     }
@@ -145,13 +145,13 @@ void ExportDialog::slot_dclicked ( const QModelIndex& )
 
 void ExportDialog::slotNew()
 {
-    directory=QString::null;
+    directory=QString();
     directory= QFileDialog::getExistingDirectory (
                    this,
                    tr ( "Select folder" ),
                    QDir::homePath() );
 
-    if ( directory!=QString::null )
+    if ( directory!=QString() )
         accept();
 
 }

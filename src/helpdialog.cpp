@@ -49,7 +49,7 @@ void HelpDialog::setText (QString text) {
 
   plainTextEdit->setFont (font);
 
-  plainTextEdit->setTabStopWidth (30);
+  plainTextEdit->setTabStopDistance (30);
   plainTextEdit->setWordWrapMode (QTextOption::NoWrap);
   plainTextEdit->setPlainText (text);
 }

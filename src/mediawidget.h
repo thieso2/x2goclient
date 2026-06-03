@@ -39,7 +39,7 @@ class MediaWidget : public ConfigWidget
     Q_OBJECT
 public:
     MediaWidget ( QString id, ONMainWindow * mw,
-                  QWidget * parent=0, Qt::WindowFlags f=0 );
+                  QWidget * parent=0, Qt::WindowFlags f=Qt::WindowFlags() );
     ~MediaWidget();
     void setDefaults();
     void saveSettings();

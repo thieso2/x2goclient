@@ -31,7 +31,7 @@ class ConTest : public QDialog, public Ui_ConTest
 {
     Q_OBJECT
 public:
-    ConTest(HttpBrokerClient* broker, QUrl url, QWidget* parent = 0, Qt::WindowFlags f = 0);
+    ConTest(HttpBrokerClient* broker, QUrl url, QWidget* parent = 0, Qt::WindowFlags f = Qt::WindowFlags());
     virtual ~ConTest();
 private:
     enum tests {SSH=22,HTTPS=443,SPEED} currentTest;

@@ -26,6 +26,7 @@
 #include <QBuffer>
 #include <QObject>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QSslSocket>
 #include "sshmasterconnection.h"
 /**
@@ -56,7 +57,7 @@ private:
     QString newBrokerPass;
     ConfigFile* config;
     ONMainWindow* mainWindow;
-    QTime requestTime;
+    QElapsedTimer requestTime;
     bool sshBroker;
     SshMasterConnection* sshConnection;
 private:

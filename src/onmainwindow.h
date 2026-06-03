@@ -349,7 +349,7 @@ public:
     void suspendSession ( QString sessId );
     bool termSession ( QString sessId,
                        bool warn=true );
-    void setStatStatus ( QString status=QString::null );
+    void setStatStatus ( QString status=QString() );
     x2goSession getNewSessionFromString ( const QString& string );
     void runCommand();
     long findWindow ( QString text );
@@ -959,8 +959,8 @@ private:
             bool acceptUnknownHosts, QString login,
             QString password, bool autologin, bool krbLogin, bool getSrv=false, bool useproxy=false,
             SshMasterConnection::ProxyType type=SshMasterConnection::PROXYSSH,
-            QString proxyserver=QString::null, quint16 proxyport=0,
-            QString proxylogin=QString::null, QString proxypassword=QString::null, QString proxyKey=QString::null,
+            QString proxyserver=QString(), quint16 proxyport=0,
+            QString proxylogin=QString(), QString proxypassword=QString(), QString proxyKey=QString(),
             bool proxyAutologin=false, bool proxyKrbLogin=false );
     void setProxyWinTitle();
     QRect proxyWinGeometry();

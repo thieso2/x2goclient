@@ -77,8 +77,8 @@ public:
     void run();
     SshMasterConnection(QObject* parent, QString host, int port, bool acceptUnknownServers, QString user,
                         QString pass, QString key, bool autologin, bool krblogin=false,
-                        bool useproxy=false, ProxyType type=PROXYSSH, QString proxyserver=QString::null, quint16 proxyport=0,
-                        QString proxylogin=QString::null, QString proxypassword=QString::null, QString proxyKey=QString::null,
+                        bool useproxy=false, ProxyType type=PROXYSSH, QString proxyserver=QString(), quint16 proxyport=0,
+                        QString proxylogin=QString(), QString proxypassword=QString(), QString proxyKey=QString(),
                         bool proxyAutologin=false, bool proxyKrbLogin=false);
     ~SshMasterConnection();
     static void finalizeLibSsh();

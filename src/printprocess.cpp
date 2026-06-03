@@ -16,6 +16,7 @@
 ***************************************************************************/
 
 #include "x2goclientconfig.h"
+#include <QRegExp>
 #include "printprocess.h"
 #include "x2gologdebug.h"
 #include <QFile>
@@ -90,7 +91,7 @@ void PrintProcess::slot_processFinished ( int exitCode,
 			          this,SLOT (
 			              slot_error (
 			                  QProcess::ProcessError ) ) );
-			proc->start ( printCmd );
+			proc->startCommand ( printCmd );
 		}
 	}
 	else
@@ -154,7 +155,7 @@ void PrintProcess::openPdf()
 #else
 		wapiShellExecute ( "open",
 		                   wapiShortFileName ( pdfFile ),
-		                   QString::null,
+		                   QString(),
 		                   wapiShortFileName ( QDir::homePath() ) );
 #endif
 	}
@@ -216,7 +217,7 @@ void PrintProcess::print()
 				          this,SLOT (
 				              slot_error (
 				                  QProcess::ProcessError ) ) );
-				proc->start ( printCmd );
+				proc->startCommand ( printCmd );
 			}
 		}
 		else
