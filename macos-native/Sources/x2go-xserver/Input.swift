@@ -111,7 +111,7 @@ let inputLock = NSLock()
 func noteInputWindow(_ fd: Int32, _ lsb: Bool, _ wid: UInt32, _ mask: UInt32, _ area: Int) {
     guard (mask & InputSelectMask) != 0 else { return }
     inputLock.lock(); defer { inputLock.unlock() }
-    if area >= inputWinArea {
+    if area > inputWinArea {            // strictly larger: keep the first full-screen input window
         inputWinArea = area; inputWin = wid; inputFd = fd; inputLsb = lsb
     }
 }

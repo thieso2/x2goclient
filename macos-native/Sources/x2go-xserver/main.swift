@@ -138,15 +138,16 @@ func winAbsOrigin(_ d: UInt32) -> (Int, Int) {
     return (ox, oy)
 }
 
-/// Read a pixel (BGRA) from any drawable, applying the window origin for windows.
+// Drawing targets a drawable's own buffer: pixmaps -> pixmap buffer, windows ->
+// the window's backing surface (window-local coords). The compositor later
+// stacks the surfaces into the framebuffer. Callers hold drawablesLock.
 @inline(__always) func drwGet(_ d: UInt32, _ x: Int, _ y: Int) -> (UInt8,UInt8,UInt8,UInt8) {
     if let pm = pixmaps[d] {
         if x < 0 || y < 0 || x >= pm.w || y >= pm.h { return (0,0,0,0) }
         let o = (y * pm.w + x) * 4; return (pm.px[o], pm.px[o+1], pm.px[o+2], pm.px[o+3])
     }
-    let (ox, oy) = winAbsOrigin(d); let ax = ox + x, ay = oy + y
-    if ax < 0 || ay < 0 || ax >= fb.w || ay >= fb.h { return (0,0,0,0) }
-    let o = (ay * fb.w + ax) * 4; return (fb.px[o], fb.px[o+1], fb.px[o+2], fb.px[o+3])
+    guard let s = surfaceFor(d), x >= 0, y >= 0, x < s.w, y < s.h else { return (0,0,0,0) }
+    let o = (y * s.w + x) * 4; return (s.px[o], s.px[o+1], s.px[o+2], s.px[o+3])
 }
 @inline(__always) func drwSet(_ d: UInt32, _ x: Int, _ y: Int, _ c: (UInt8,UInt8,UInt8,UInt8)) {
     if let pm = pixmaps[d] {
@@ -154,19 +155,15 @@ func winAbsOrigin(_ d: UInt32) -> (Int, Int) {
         let o = (y * pm.w + x) * 4; pm.px[o] = c.0; pm.px[o+1] = c.1; pm.px[o+2] = c.2; pm.px[o+3] = c.3
         return
     }
-    let (ox, oy) = winAbsOrigin(d); let ax = ox + x, ay = oy + y
-    if ax < 0 || ay < 0 || ax >= fb.w || ay >= fb.h { return }
-    let o = (ay * fb.w + ax) * 4; fb.px[o] = c.0; fb.px[o+1] = c.1; fb.px[o+2] = c.2; fb.px[o+3] = 0xff
+    guard let s = surfaceFor(d), x >= 0, y >= 0, x < s.w, y < s.h else { return }
+    let o = (y * s.w + x) * 4; s.px[o] = c.0; s.px[o+1] = c.1; s.px[o+2] = c.2; s.px[o+3] = 0xff
+    s.drawn = true
 }
 func drwFill(_ d: UInt32, _ x: Int, _ y: Int, _ rw: Int, _ rh: Int, _ bgra: (UInt8,UInt8,UInt8)) {
     drawablesLock.lock(); defer { drawablesLock.unlock() }
-    if pixmaps[d] == nil { // window/screen path -> straight to framebuffer (locks itself)
-        let (ox, oy) = winAbsOrigin(d); fb.fillRect(ox + x, oy + y, rw, rh, bgra); return
-    }
     for yy in y..<(y+rh) { for xx in x..<(x+rw) { drwSet(d, xx, yy, (bgra.0, bgra.1, bgra.2, 0xff)) } }
 }
 func drwPutImageZ(_ d: UInt32, _ x: Int, _ y: Int, _ iw: Int, _ ih: Int, _ data: ArraySlice<UInt8>) {
-    if pixmaps[d] == nil { let (ox, oy) = winAbsOrigin(d); fb.putImageZ(ox + x, oy + y, iw, ih, data); return }
     drawablesLock.lock(); defer { drawablesLock.unlock() }
     let bpr = iw * 4; let base = data.startIndex
     for ry in 0..<ih { for rx in 0..<iw {
@@ -177,8 +174,7 @@ func drwPutImageZ(_ d: UInt32, _ x: Int, _ y: Int, _ iw: Int, _ ih: Int, _ data:
 }
 /// CopyArea/Composite: move a rectangle of pixels between any two drawables.
 func drwCopy(_ src: UInt32, _ dst: UInt32, _ sx: Int, _ sy: Int, _ dx: Int, _ dy: Int, _ cw: Int, _ ch: Int) {
-    fb.lock.lock(); drawablesLock.lock()
-    defer { drawablesLock.unlock(); fb.lock.unlock() }
+    drawablesLock.lock(); defer { drawablesLock.unlock() }
     for ry in 0..<ch { for rx in 0..<cw {
         let p = drwGet(src, sx + rx, sy + ry)
         if p.3 == 0 && pixmaps[src] != nil { continue }   // skip fully-transparent source px
@@ -385,7 +381,7 @@ let lfd = listenUnix(path)
 // Periodically snapshot the framebuffer for headless validation (and as the
 // surface Metal will consume once wired into the app).
 Thread.detachNewThread {
-    while true { fb.snapshotPPM(to: "/tmp/x2go_fb.ppm"); Thread.sleep(forTimeInterval: 0.5) }
+    while true { compositeToFramebuffer(); fb.snapshotPPM(to: "/tmp/x2go_fb.ppm"); Thread.sleep(forTimeInterval: 0.3) }
 }
 
 // Headless input self-test: with no GUI/NSEvents, drive the injection path
@@ -625,10 +621,13 @@ func serveClient(_ cfd: Int32) {
             let wid = r.u32(); let parent = r.u32()
             let x = si16(r.u16()), y = si16(r.u16())
             let ww = Int(r.u16()), hh = Int(r.u16())
-            _ = r.u16() /*border*/; _ = r.u16() /*class*/; _ = r.u32() /*visual*/
+            _ = r.u16() /*border*/; let wclass = r.u16(); _ = r.u32() /*visual*/
             let mask = r.u32()
             let em = valueFor(&r, mask: mask, bit: 0x800) ?? 0   // CWEventMask
             windows[wid] = (x, y, ww, hh, em); winParent[wid] = parent
+            // InputOnly (class 2) windows have no pixels — never give them a
+            // surface, or they would composite as opaque black over the desktop.
+            if wclass != 2 { compEnsureSurface(wid, ww, hh) }
             if em != 0 { dlog("CreateWindow \(wid) \(ww)x\(hh) eventmask=0x\(String(em, radix: 16))") }
             noteInputWindow(cfd, lsb, wid, em, ww * hh)
         case 2: // ChangeWindowAttributes: window, value-mask, values
@@ -638,19 +637,27 @@ func serveClient(_ cfd: Int32) {
                 dlog("ChangeWindowAttributes \(wid) eventmask=0x\(String(em, radix: 16)) area=\(win.w*win.h)")
                 noteInputWindow(cfd, lsb, wid, em, win.w * win.h)
             }
-        case 12: // ConfigureWindow: window, mask, pad, values -> track geometry (popups!)
+        case 12: // ConfigureWindow: window, mask, pad, values [x,y,w,h,border,sibling,stack]
             let wid = r.u32(); let mask = Int(r.u16()); _ = r.u16()
-            var nx: Int?, ny: Int?, nw: Int?, nh: Int?
+            var nx: Int?, ny: Int?, nw: Int?, nh: Int?, stackMode: Int?
             if mask & 0x1 != 0 { nx = si16(UInt16(truncatingIfNeeded: r.u32())) }
             if mask & 0x2 != 0 { ny = si16(UInt16(truncatingIfNeeded: r.u32())) }
             if mask & 0x4 != 0 { nw = Int(UInt16(truncatingIfNeeded: r.u32())) }
             if mask & 0x8 != 0 { nh = Int(UInt16(truncatingIfNeeded: r.u32())) }
+            if mask & 0x10 != 0 { _ = r.u32() }            // border-width
+            if mask & 0x20 != 0 { _ = r.u32() }            // sibling
+            if mask & 0x40 != 0 { stackMode = Int(r.u32() & 0xff) }
             var win = windows[wid] ?? (0, 0, fb.w, fb.h, 0)
             if let v = nx { win.x = v }; if let v = ny { win.y = v }
             if let v = nw { win.w = v }; if let v = nh { win.h = v }
             windows[wid] = win
+            compEnsureSurface(wid, win.w, win.h)
+            if let sm = stackMode {                         // 0=Above 1=Below 2=TopIf 3=BottomIf
+                if sm == 1 || sm == 3 { compLowerWindow(wid) } else { compRaiseWindow(wid) }
+            }
         case 8: // MapWindow: window -> deliver MapNotify + Expose if selected
             let wid = r.u32()
+            compMapWindow(wid)
             let win = windows[wid] ?? (0, 0, fb.w, fb.h, StructureNotifyMask | ExposureMask)
             if (win.mask & StructureNotifyMask) != 0 {
                 sendEvent(cfd, lsb: lsb, code: 19) { $0.u32(wid); $0.u32(wid); $0.u8(0) } // MapNotify
@@ -661,6 +668,11 @@ func serveClient(_ cfd: Int32) {
                     $0.u16(UInt16(min(win.w, 0xffff))); $0.u16(UInt16(min(win.h, 0xffff))); $0.u16(0)
                 }
             }
+        case 10: // UnmapWindow: window -> hide (compositor stops drawing it)
+            compUnmapWindow(r.u32())
+        case 4:  // DestroyWindow: window -> drop its surface
+            let wid = r.u32(); compDestroyWindow(wid)
+            drawablesLock.lock(); windows[wid] = nil; winParent[wid] = nil; drawablesLock.unlock()
 
         case 55: // CreateGC: cid, drawable, value-mask, values
             let cid = r.u32(); _ = r.u32(); let mask = r.u32()

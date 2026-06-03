@@ -2,8 +2,10 @@ import AppKit
 import Metal
 import QuartzCore
 
-// Presents the X server's framebuffer in a native macOS window via Metal —
-// the no-XQuartz native display surface. Shaders compiled at runtime.
+// Presents the composited framebuffer in a native window via Metal. Uses
+// CAMetalDisplayLink (macOS 14+) to drive rendering in step with the display,
+// and runtime-compiled MSL. The X server composites window surfaces into `fb`;
+// this uploads `fb` to a texture and blits it to the drawable each vsync.
 
 private let shaderSrc = """
 #include <metal_stdlib>
@@ -19,27 +21,19 @@ fragment float4 f_main(VSOut in [[stage_in]], texture2d<float> tex [[texture(0)]
 }
 """
 
-final class FBView: NSView {
-    let device = MTLCreateSystemDefaultDevice()!
-    var queue: MTLCommandQueue!
-    var pipeline: MTLRenderPipelineState!
-    var sampler: MTLSamplerState!
-    var tex: MTLTexture!
+/// Off-main-actor renderer driven by the display link.
+final class MetalRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sendable {
+    let device: MTLDevice
+    let queue: MTLCommandQueue
+    let pipeline: MTLRenderPipelineState
+    let sampler: MTLSamplerState
+    let tex: MTLTexture
     let fb: Framebuffer
-    var timer: Timer?
 
-    init(fb: Framebuffer) {
+    init(device: MTLDevice, fb: Framebuffer) {
+        self.device = device
         self.fb = fb
-        super.init(frame: NSRect(x: 0, y: 0, width: fb.w, height: fb.h))
-        wantsLayer = true
-        let ml = CAMetalLayer()
-        ml.device = device
-        ml.pixelFormat = .bgra8Unorm
-        ml.framebufferOnly = true
-        ml.drawableSize = CGSize(width: fb.w, height: fb.h)
-        layer = ml
-
-        queue = device.makeCommandQueue()
+        queue = device.makeCommandQueue()!
         let lib = try! device.makeLibrary(source: shaderSrc, options: nil)
         let d = MTLRenderPipelineDescriptor()
         d.vertexFunction = lib.makeFunction(name: "v_main")
@@ -47,10 +41,57 @@ final class FBView: NSView {
         d.colorAttachments[0].pixelFormat = .bgra8Unorm
         pipeline = try! device.makeRenderPipelineState(descriptor: d)
         let sd = MTLSamplerDescriptor(); sd.minFilter = .linear; sd.magFilter = .nearest
-        sampler = device.makeSamplerState(descriptor: sd)
-        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: fb.w, height: fb.h, mipmapped: false)
-        td.usage = [.shaderRead]; td.storageMode = .managed
-        tex = device.makeTexture(descriptor: td)
+        sampler = device.makeSamplerState(descriptor: sd)!
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+                    width: fb.w, height: fb.h, mipmapped: false)
+        td.usage = [.shaderRead]; td.storageMode = .shared
+        tex = device.makeTexture(descriptor: td)!
+        super.init()
+    }
+
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        compositeToFramebuffer()
+        fb.lock.lock()
+        fb.px.withUnsafeBytes { p in
+            tex.replace(region: MTLRegionMake2D(0, 0, fb.w, fb.h), mipmapLevel: 0,
+                        withBytes: p.baseAddress!, bytesPerRow: fb.w * 4)
+        }
+        fb.lock.unlock()
+        let drawable = update.drawable
+        guard let cmd = queue.makeCommandBuffer() else { return }
+        let rp = MTLRenderPassDescriptor()
+        rp.colorAttachments[0].texture = drawable.texture
+        rp.colorAttachments[0].loadAction = .clear
+        rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        rp.colorAttachments[0].storeAction = .store
+        let enc = cmd.makeRenderCommandEncoder(descriptor: rp)!
+        enc.setRenderPipelineState(pipeline)
+        enc.setFragmentTexture(tex, index: 0)
+        enc.setFragmentSamplerState(sampler, index: 0)
+        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        enc.endEncoding()
+        cmd.present(drawable)
+        cmd.commit()
+    }
+}
+
+final class FBView: NSView {
+    let fb: Framebuffer
+    let renderer: MetalRenderer
+    let metalLayer = CAMetalLayer()
+    var link: CAMetalDisplayLink?
+
+    init(fb: Framebuffer) {
+        self.fb = fb
+        let dev = MTLCreateSystemDefaultDevice()!
+        renderer = MetalRenderer(device: dev, fb: fb)
+        super.init(frame: NSRect(x: 0, y: 0, width: fb.w, height: fb.h))
+        wantsLayer = true
+        metalLayer.device = dev
+        metalLayer.pixelFormat = .bgra8Unorm
+        metalLayer.framebufferOnly = true
+        metalLayer.drawableSize = CGSize(width: fb.w, height: fb.h)
+        layer = metalLayer
     }
     required init?(coder: NSCoder) { nil }
 
@@ -107,33 +148,11 @@ final class FBView: NSView {
     }
 
     func start() {
-        let t = Timer(timeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.render() }
-        }
-        RunLoop.main.add(t, forMode: .common); timer = t
-    }
-
-    private func render() {
-        fb.lock.lock()
-        fb.px.withUnsafeBytes { p in
-            tex.replace(region: MTLRegionMake2D(0, 0, fb.w, fb.h), mipmapLevel: 0,
-                        withBytes: p.baseAddress!, bytesPerRow: fb.w * 4)
-        }
-        fb.lock.unlock()
-        guard let ml = layer as? CAMetalLayer, let drw = ml.nextDrawable(),
-              let cmd = queue.makeCommandBuffer() else { return }
-        let rp = MTLRenderPassDescriptor()
-        rp.colorAttachments[0].texture = drw.texture
-        rp.colorAttachments[0].loadAction = .clear
-        rp.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,1)
-        rp.colorAttachments[0].storeAction = .store
-        let enc = cmd.makeRenderCommandEncoder(descriptor: rp)!
-        enc.setRenderPipelineState(pipeline)
-        enc.setFragmentTexture(tex, index: 0)
-        enc.setFragmentSamplerState(sampler, index: 0)
-        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        enc.endEncoding()
-        cmd.present(drw); cmd.commit()
+        let dl = CAMetalDisplayLink(metalLayer: metalLayer)
+        dl.delegate = renderer
+        dl.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        dl.add(to: .main, forMode: .common)
+        link = dl
     }
 }
 

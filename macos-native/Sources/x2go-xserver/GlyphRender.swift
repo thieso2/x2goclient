@@ -71,8 +71,8 @@ func renderCompositeGlyphs(_ body: [UInt8], lsb: Bool, idBytes: Int) {
     guard let dst = pictures[dstP] else { return }
 
     var penX = 0, penY = 0
-    fb.lock.lock(); drawablesLock.lock()
-    defer { drawablesLock.unlock(); fb.lock.unlock() }
+    drawablesLock.lock()
+    defer { drawablesLock.unlock() }
     while r.remaining >= 8 {
         let count = Int(r.u8())
         if count == 255 {                       // glyphset change: next 4 bytes = new gsid
