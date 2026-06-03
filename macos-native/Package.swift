@@ -28,7 +28,7 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(x11Lib)", "-lX11", "-lXext", "-lXtst",
-                    "-rpath", x11Lib
+                    "-Xlinker", "-rpath", "-Xlinker", x11Lib
                 ])
             ]
         )
