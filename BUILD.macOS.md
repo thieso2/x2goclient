@@ -98,6 +98,24 @@ Connecting a session needs three runtime pieces in the bundle plus XQuartz:
 so a session may *look* black in a screenshot while rendering fine on screen;
 dump the real pixels with `xwd -name X2GO-... | xwdtopnm | pnmtopng` to verify.
 
+### Black window interiors / move artifacts (known macOS issue)
+If window *decorations* render but *interiors* are black and moving windows
+leaves trails, the cause is the **remote window manager's compositor**, which
+does not survive the nxagent→nxproxy→XQuartz round-trip. Disable it in the
+session (this is the fix, confirmed on XFCE):
+
+    xfconf-query -c xfwm4 -p /general/use_compositing -s false
+    # or Settings > Window Manager Tweaks > Compositor > uncheck "Enable display compositing"
+    # persistent file: ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+
+Do **not** `defaults write org.xquartz.X11 enable_render_extension 0` (a common
+fix for *direct* X11/Java apps): nxproxy *replays* RENDER onto XQuartz, so
+disabling it breaks the proxy ("Connection with remote peer broken").
+
+Secondary: XQuartz **2.8.5** regressed expose handling on resize
+(XQuartz#309; 2.8.4 was the last good release) — if resize artifacts persist
+after disabling remote compositing, downgrade XQuartz to 2.8.4.
+
 ## Notes on the Qt4 → Qt6 port
 
 The macOS code path never used the Qt4-only X11 APIs (`QX11EmbedContainer`,
