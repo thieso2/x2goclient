@@ -391,9 +391,16 @@ before each run.
   CreateSolidFill backgrounds render. `CAMetalDisplayLink` (macOS 14+) drives
   presentation. Clicking the panel opens the Applications menu as a stacked
   window; double/right-click stable.
-- 🔜 Remaining polish: a notification popup renders dark; in-menu glyph fidelity;
-  alpha-blended compositing for ARGB windows; incremental damage updates instead
-  of full-frame recomposite.
+- ✅ **App windows open and render**: clicking a dock launcher starts the app and
+  its window now appears. Key fixes: ReparentWindow (op7) so the dock/panel and
+  WM-decorated windows position correctly; VisibilityNotify(Unobscured) on map
+  (nxagent skips drawing windows it thinks are obscured — without it app windows
+  were created but never drawn); SetSelectionOwner/GetSelectionOwner tracking
+  (apps were spinning re-claiming the selection).
+- 🔜 Remaining polish: GTK/Qt window **content fidelity** (window frames appear
+  but interior is currently sparse for some apps — more RENDER draw-op coverage
+  needed); old-style primitives (PolyArc/PolyText/PolyLine); alpha-blended ARGB
+  compositing; incremental damage updates.
 
 ## Key finding
 
