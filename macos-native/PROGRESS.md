@@ -249,6 +249,45 @@ standalone against our server with a controlled peer — a deeper multi-hour
 investigation. This is the open blocker; the native endpoint streams initial
 content but not the full desktop yet.
 
+
+## Full-protocol push: extensive but blocked on NX back-channel (definitive trace)
+
+Implemented this round: per-client async writer + output queue (decouple read/
+write to kill any I/O deadlock), 1 MB socket buffers, removed per-request stderr
+logging, full reply-expecting request set with correct framing
+(GetWindowAttributes len-3, QueryKeymap, GetKeyboardControl len-5, GetPointer*,
+GetScreenSaver, fallbacks), event delivery (MapNotify/Expose), keymap fix.
+
+Used the bundled nxproxy as a wrapper with `-d 6 -o /tmp/nxproxy.log` to get
+nxproxy's own debug trace. Findings (all reproduced, deterministic):
+- nxproxy connects to our :77 server fine (FD#8) and reports **no local X
+  error** — our protocol is accepted.
+- nxagent sends exactly **~2589 bytes** then goes silent; the peer link (FD#6)
+  then fails: "Failure reading from descriptors for proxy FD#6", mirrored on the
+  server ("...FD#8"). nxcomp HandleShutdown confirms abrupt close, no clean NX
+  shutdown.
+- nxproxy logs repeated "Going to flush any data to the proxy" but **sends
+  nothing back to the peer** — i.e. it never relays our replies/control to
+  nxagent, so nxagent times out.
+- **Deterministic at 2589 bytes regardless of**: logging removal, 1 MB buffers,
+  async writer (no deadlock), full reply set, Map/Expose events, keymap fix, and
+  disabling printing/file-sharing in the profile. So it's a protocol/flow-control
+  point, not timing or our write path.
+- Also discovered the client's local sshd for printing/file-sharing fails
+  ("unknown key type dsa") and pops a modal dialog — a real separate bug, but
+  not the teardown cause (disabling it didn't change the 2589-byte break).
+
+Conclusion: our hand-written X server is **accepted by nxproxy**, but the
+nxproxy↔nxagent NX back-channel doesn't progress (nxproxy isn't relaying to the
+peer), so nxagent times out after its initial ~2.6 KB. Why nxproxy doesn't
+forward to the peer in agent mode with our server is the open question; isolating
+it needs tracing nxcomp's agent-mode read/relay path (ClientChannel/ServerChannel
+in nxcomp) — a deeper investigation than this session allows.
+
+Net: native X server proven (handshake + drawing + Metal + real session connects
+and renders initial content); a **full streaming desktop is not yet achieved**
+and is gated on the NX back-channel issue above.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**

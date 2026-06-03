@@ -129,6 +129,30 @@ func readExact(_ fd: Int32, _ n: Int) -> [UInt8]? {
     return buf
 }
 
+// Per-client output queue: the reader thread enqueues replies/events (never
+// blocks on the socket), a dedicated writer thread drains to the socket. This
+// breaks the full-duplex deadlock with nxproxy (it writes a big request burst
+// to us while we'd be blocked writing replies it isn't reading yet).
+final class OutQueue: @unchecked Sendable {
+    private var buf = [UInt8]()
+    private let cond = NSCondition()
+    private var closed = false
+    func push(_ b: [UInt8]) { cond.lock(); buf.append(contentsOf: b); cond.signal(); cond.unlock() }
+    func close() { cond.lock(); closed = true; cond.signal(); cond.unlock() }
+    func take() -> [UInt8]? {
+        cond.lock(); defer { cond.unlock() }
+        while buf.isEmpty && !closed { cond.wait() }
+        if buf.isEmpty { return nil }
+        let b = buf; buf.removeAll(keepingCapacity: true); return b
+    }
+}
+nonisolated(unsafe) var outQueues: [Int32: OutQueue] = [:]
+let outQueuesLock = NSLock()
+func enqueue(_ fd: Int32, _ bytes: [UInt8]) {
+    outQueuesLock.lock(); let q = outQueues[fd]; outQueuesLock.unlock()
+    q?.push(bytes)
+}
+
 func writeAll(_ fd: Int32, _ bytes: [UInt8]) {
     var sent = 0
     bytes.withUnsafeBytes { p in
@@ -200,7 +224,7 @@ func sendSetup(_ fd: Int32, lsb: Bool) {
     w.u16(11); w.u16(0)                     // protocol version
     w.u16(UInt16(p.bytes.count / 4))        // additional data length (4-byte units)
     w.raw(p.bytes)
-    writeAll(fd, w.bytes)
+    enqueue(fd, w.bytes)
 }
 
 // MARK: - replies
@@ -218,7 +242,7 @@ func reply(_ fd: Int32, lsb: Bool, detail: UInt8 = 0, extra: ([UInt8]) = [], bui
     build(&w)                               // 24 bytes of fixed reply data
     while w.bytes.count < 32 { w.u8(0) }
     w.raw(extra)
-    writeAll(fd, w.bytes)
+    enqueue(fd, w.bytes)
 }
 
 // Generic reply: `payload` is everything after the 8-byte reply header; length
@@ -230,7 +254,7 @@ func replyRaw(_ fd: Int32, lsb: Bool, detail: UInt8, _ payload: [UInt8]) {
     var w = ByteWriter(lsb: lsb)
     w.u8(1); w.u8(detail); w.u16(seq); w.u32(UInt32((p.count - 24) / 4))
     w.raw(p)
-    writeAll(fd, w.bytes)
+    enqueue(fd, w.bytes)
 }
 
 // Reply-expecting opcodes we answer generically (length-0, 32-byte) when not
@@ -270,7 +294,7 @@ func sendEvent(_ fd: Int32, lsb: Bool, code: UInt8, build: (inout ByteWriter) ->
     w.u8(code); w.u8(0); w.u16(seq)
     build(&w)
     while w.bytes.count < 32 { w.u8(0) }
-    writeAll(fd, w.bytes)
+    enqueue(fd, w.bytes)
 }
 // Extract the GCForeground (bit 0x4) value from a value-mask + value list.
 func foregroundFrom(_ r: inout ByteReader, mask: UInt32) -> (UInt8,UInt8,UInt8)? {
@@ -300,7 +324,17 @@ func acceptLoop() {
 }
 
 func serveClient(_ cfd: Int32) {
+    // Large socket buffers so bursts from nxproxy don't back up (FD#8 buffer
+    // backpressure was starving the NX peer link).
+    var bufsz: Int32 = 1 << 20
+    setsockopt(cfd, SOL_SOCKET, SO_RCVBUF, &bufsz, socklen_t(MemoryLayout<Int32>.size))
+    setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &bufsz, socklen_t(MemoryLayout<Int32>.size))
     guard let lsb = readClientSetup(cfd) else { close(cfd); return }
+    // Output queue + writer thread (decouples writing from reading).
+    let q = OutQueue()
+    outQueuesLock.lock(); outQueues[cfd] = q; outQueuesLock.unlock()
+    let writer = Thread { while let chunk = q.take() { writeAll(cfd, chunk) } }
+    writer.stackSize = 1 << 20; writer.start()
     seq = 0                              // sequence numbers restart per connection
     sendSetup(cfd, lsb: lsb)
     FileHandle.standardError.write("client connected (lsb=\(lsb))\n".data(using: .utf8)!)
@@ -317,7 +351,6 @@ func serveClient(_ cfd: Int32) {
         let bodyLen = Int(lenU) * 4 - 4
         let body = bodyLen > 0 ? (readExact(cfd, bodyLen) ?? []) : []
         seq &+= 1
-        FileHandle.standardError.write("req op=\(opcode) detail=\(detail) len=\(lenU)\n".data(using: .utf8)!)
         var r = ByteReader(body, lsb: lsb)
 
         switch opcode {
@@ -456,6 +489,8 @@ func serveClient(_ cfd: Int32) {
     let summary = unknown.sorted { $0.value > $1.value }.prefix(12)
         .map { "op\($0.key)×\($0.value)" }.joined(separator: " ")
     FileHandle.standardError.write("client disconnected. unhandled: \(summary)\n".data(using: .utf8)!)
+    q.close()
+    outQueuesLock.lock(); outQueues[cfd] = nil; outQueuesLock.unlock()
     close(cfd)
 }
 
