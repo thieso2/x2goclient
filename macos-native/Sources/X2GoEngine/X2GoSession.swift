@@ -29,9 +29,6 @@ public actor X2GoSession {
         public var tools: ToolPaths
         /// Prefer resuming an existing suspended session over starting a new one.
         public var preferResume: Bool
-        /// Use the system `ssh` CLI (agent, ssh_config, all key types) instead of
-        /// the pure-Swift transport.
-        public var useSystemSSH: Bool
         /// Strict host-key checking (system ssh). Off = lenient for re-imaged boxes.
         public var strictHostKey: Bool
 
@@ -40,14 +37,13 @@ public actor X2GoSession {
                     screen: Geometry, link: LinkSpeed = .lan, pack: String = "16m-jpeg-9",
                     clipboard: ClipboardMode = .both, keyboardLayout: String = "us",
                     disableServerCompositing: Bool = true, tools: ToolPaths,
-                    preferResume: Bool = true, useSystemSSH: Bool = true,
-                    strictHostKey: Bool = false) {
+                    preferResume: Bool = true, strictHostKey: Bool = false) {
             self.endpoint = endpoint; self.credentials = credentials; self.command = command
             self.kind = kind; self.displayMode = displayMode; self.screen = screen
             self.link = link; self.pack = pack; self.clipboard = clipboard
             self.keyboardLayout = keyboardLayout
             self.disableServerCompositing = disableServerCompositing; self.tools = tools
-            self.preferResume = preferResume; self.useSystemSSH = useSystemSSH
+            self.preferResume = preferResume
             self.strictHostKey = strictHostKey
         }
     }
@@ -77,13 +73,9 @@ public actor X2GoSession {
 
     public init(config: Config) {
         self.config = config
-        if config.useSystemSSH {
-            self.ssh = CLISSHTransport(endpoint: config.endpoint, credentials: config.credentials,
-                                       tag: String(UUID().uuidString.prefix(8)),
-                                       strictHostKey: config.strictHostKey)
-        } else {
-            self.ssh = SSHConnection(endpoint: config.endpoint, credentials: config.credentials)
-        }
+        self.ssh = CLISSHTransport(endpoint: config.endpoint, credentials: config.credentials,
+                                   tag: String(UUID().uuidString.prefix(8)),
+                                   strictHostKey: config.strictHostKey)
     }
 
     /// Total bytes carried over the NX tunnel, or nil if the backend (CLI ssh)

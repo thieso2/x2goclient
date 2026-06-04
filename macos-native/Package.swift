@@ -20,14 +20,7 @@ let x11Link: [LinkerSetting] = [
 let package = Package(
     name: "X2Go",
     platforms: [.macOS(.v14)],
-    dependencies: [
-        // Apple's pure-Swift SSH (current). We use it directly (no Citadel) for
-        // connect/auth/exec and the directTCPIP NX tunnel — full control, no
-        // version conflicts.
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.40.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", "2.5.0" ..< "4.0.0"),
-    ],
+    // No external packages: SSH is the system `ssh` CLI (CLISSHTransport).
     targets: [
         // The only C: Xlib/XTEST/XGetImage bridge to the local Xvfb.
         .target(
@@ -44,20 +37,11 @@ let package = Package(
         // Pure x2go command-string builders/parsers + geometry. No I/O.
         .target(name: "X2GoProtocol"),
 
-        // Pure-Swift SSH: connect/auth, exec, and local TCP port-forward.
+        // SSH via the system `ssh` CLI (agent, ssh_config, all key types).
+        // Swift 5 mode: the Process/Pipe terminationHandler captures non-Sendable
+        // pipes, which Swift 6 strict concurrency would reject.
         .target(
             name: "X2GoSSH",
-            dependencies: [
-                .product(name: "NIOSSH", package: "swift-nio-ssh"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "NIOFoundationCompat", package: "swift-nio"),
-                .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "_CryptoExtras", package: "swift-crypto"),
-            ],
-            // SwiftNIO's Channel/handlers are not Sendable; build this NIO-wrapping
-            // layer in Swift 5 mode (the actor still isolates; we expose only
-            // Sendable results across its boundary). The rest of the app is Swift 6.
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
 

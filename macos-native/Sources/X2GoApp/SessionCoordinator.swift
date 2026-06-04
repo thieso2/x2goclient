@@ -13,6 +13,8 @@ import X2GoDisplay
 final class SessionCoordinator {
     private(set) var connections: [UUID: ConnectionViewModel] = [:]   // profileID -> vm
     var focusedID: UUID?
+    /// Set when a connection is ready and its window should be opened/raised.
+    var windowToOpen: UUID?
 
     private let tools = AppTools.resolve()
     private let clipboard = ClipboardBridge()
@@ -30,16 +32,17 @@ final class SessionCoordinator {
         let quality = "\(profile.speed.rawValue)·q\(profile.quality)"
         let vm = ConnectionViewModel(profileID: profile.id, config: config, title: profile.name,
                                      qualityLabel: quality)
+        vm.onReady = { [weak self] id in self?.windowToOpen = id }
         connections[profile.id] = vm
         vm.connect()
     }
 
-    func close(_ profileID: UUID) async {
+    func close(_ profileID: UUID, terminate: Bool = false) async {
         guard let vm = connections[profileID] else { return }
         if clipboardOwner == profileID { clipboard.stop(); clipboardOwner = nil }
         if focusedID == profileID { focusedID = nil }
         connections[profileID] = nil
-        await vm.teardown()
+        await vm.teardown(terminate: terminate)
     }
 
     func closeAll() async {

@@ -15,6 +15,7 @@ struct SessionManagerView: View {
     @State private var editing: SessionProfile?
     @State private var isNew = false
     @State private var passwordFor: SessionProfile?
+    @State private var disconnecting: SessionProfile?
     @State private var search = ""
     @State private var importNote: String?
 
@@ -44,14 +45,14 @@ struct SessionManagerView: View {
                                 selected: selection == profile.id,
                                 onEdit: { edit(profile) },
                                 onOpen: { activate(profile) },
-                                onClose: { dismissWindow(id: "connection", value: profile.id) })
+                                onClose: { disconnecting = profile })
                             .onTapGesture { selection = profile.id }
                             .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
                             .contextMenu {
                                 Button("Connect / Show") { activate(profile) }
                                 Button("Edit…") { edit(profile) }
                                 if coordinator.isActive(profile.id) {
-                                    Button("Disconnect") { dismissWindow(id: "connection", value: profile.id) }
+                                    Button("Disconnect") { disconnecting = profile }
                                 }
                                 Divider()
                                 Button("Delete", role: .destructive) { store.delete(profile) }
@@ -85,8 +86,29 @@ struct SessionManagerView: View {
         .sheet(item: $passwordFor) { profile in
             PasswordPrompt(profileName: profile.name) { password in
                 coordinator.connectIfNeeded(profile: profile, credentials: [.password(password)])
-                openWindow(id: "connection", value: profile.id)
             }
+        }
+        .onChange(of: coordinator.windowToOpen) { _, newID in
+            if let id = newID {
+                openWindow(id: "connection", value: id)
+                coordinator.windowToOpen = nil
+            }
+        }
+        .confirmationDialog("Disconnect \(disconnecting?.name ?? "session")?",
+                            isPresented: Binding(get: { disconnecting != nil },
+                                                 set: { if !$0 { disconnecting = nil } }),
+                            presenting: disconnecting) { p in
+            Button("Suspend") {
+                Task { await coordinator.close(p.id, terminate: false) }
+                dismissWindow(id: "connection", value: p.id)
+            }
+            Button("Terminate", role: .destructive) {
+                Task { await coordinator.close(p.id, terminate: true) }
+                dismissWindow(id: "connection", value: p.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Suspend keeps your apps running on the server (resume later). Terminate ends the session.")
         }
         .alert("Import", isPresented: .constant(importNote != nil)) {
             Button("OK") { importNote = nil }
@@ -119,13 +141,14 @@ struct SessionManagerView: View {
     /// Connect (or, if already live, just bring the window to the front).
     private func activate(_ p: SessionProfile) {
         if coordinator.isActive(p.id) {
-            openWindow(id: "connection", value: p.id)   // dedups -> brings to front
+            openWindow(id: "connection", value: p.id)   // already live -> bring to front
             return
         }
+        // Start connecting; the window opens via coordinator.windowToOpen once the
+        // session is established (or a reconnect chooser is needed).
         if let key = p.keyPath, !key.isEmpty {
             let path = (key as NSString).expandingTildeInPath
             coordinator.connectIfNeeded(profile: p, credentials: [.privateKeyFile(URL(fileURLWithPath: path))])
-            openWindow(id: "connection", value: p.id)
         } else {
             passwordFor = p
         }

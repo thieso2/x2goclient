@@ -43,6 +43,10 @@ final class ConnectionViewModel: Identifiable {
     /// Existing server sessions to offer for reconnect (drives the chooser sheet).
     var pendingSessions: [X2GoProtocol.SessionInfo]?
     private var choiceCont: CheckedContinuation<X2GoSession.SessionChoice, Never>?
+    /// Called when the window should appear (connected, or a chooser is pending).
+    var onReady: ((UUID) -> Void)?
+    /// Retains the per-window close delegate (NSWindow.delegate is weak).
+    var windowDelegate: AnyObject?
 
     private let session: X2GoSession
     private var torn = false
@@ -104,6 +108,7 @@ final class ConnectionViewModel: Identifiable {
                 self.displayName = disp
                 self.sessionSize = CGSize(width: x.width, height: x.height)
                 self.state = .connected
+                self.onReady?(self.id)          // now show the window
                 self.startStatsLoop()
             } catch {
                 self.state = .failed(error.localizedDescription)
@@ -139,6 +144,7 @@ final class ConnectionViewModel: Identifiable {
     /// the chooser and awaits the user's pick.
     func chooseSession(_ sessions: [X2GoProtocol.SessionInfo]) async -> X2GoSession.SessionChoice {
         state = .connecting("choose a session…")
+        onReady?(id)   // the chooser needs a window to show in
         return await withCheckedContinuation { cont in
             self.choiceCont = cont
             self.pendingSessions = sessions
@@ -152,13 +158,14 @@ final class ConnectionViewModel: Identifiable {
         choiceCont = nil
     }
 
-    /// Close the display BEFORE suspending (which kills Xvfb) to avoid an XIO abort.
-    func teardown() async {
+    /// Close the display BEFORE suspend/terminate (which kills Xvfb) to avoid an
+    /// XIO abort. `terminate` ends the session; otherwise it's suspended (resumable).
+    func teardown(terminate: Bool = false) async {
         if torn { return }
         torn = true
         statsTask?.cancel(); statsTask = nil
         x11?.close(); x11 = nil
-        await session.suspend()
+        if terminate { await session.terminate() } else { await session.suspend() }
     }
 
     // MARK: - Formatting

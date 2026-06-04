@@ -83,7 +83,7 @@ let creds: [SSHCredential] = [.privateKeyFile(URL(fileURLWithPath: keyPath))]
 do {
     switch sub {
     case "exec":
-        let conn = SSHConnection(endpoint: endpoint, credentials: creds)
+        let conn = CLISSHTransport(endpoint: endpoint, credentials: creds, tag: "probe")
         try await conn.connect()
         let command = flag("--cmd") ?? "export HOSTNAME && x2golistsessions"
         let r = try await conn.exec(command)
@@ -92,7 +92,7 @@ do {
         await conn.disconnect()
 
     case "forward":
-        let conn = SSHConnection(endpoint: endpoint, credentials: creds)
+        let conn = CLISSHTransport(endpoint: endpoint, credentials: creds, tag: "probe")
         try await conn.connect()
         let local = Int(flag("--local") ?? "30122") ?? 30122
         let rhost = flag("--remote-host") ?? "localhost"
@@ -151,7 +151,7 @@ do {
         print("OK: live desktop streamed into the Swift engine, no XQuartz")
 
     case "bench":
-        let conn = SSHConnection(endpoint: endpoint, credentials: creds)
+        let conn = CLISSHTransport(endpoint: endpoint, credentials: creds, tag: "probe")
         try await conn.connect()
         let mb = Int(flag("--mb") ?? "200") ?? 200
         let cmd = "dd if=/dev/zero bs=1M count=\(mb) 2>/dev/null"

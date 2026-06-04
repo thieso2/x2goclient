@@ -9,8 +9,10 @@ struct ConnectionWindowView: View {
     var body: some View {
         Group {
             if let id, let vm = coordinator.connection(for: id) {
+                // Close is handled by ConnectionWindowDelegate (asks suspend vs
+                // terminate) and by the dashboard; no onDisappear teardown here,
+                // so the chosen action isn't overridden by a default suspend.
                 ConnectionView(vm: vm)
-                    .onDisappear { Task { await coordinator.close(id) } }
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "rectangle.on.rectangle.slash").font(.largeTitle)

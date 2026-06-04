@@ -39,10 +39,8 @@ struct ProfileEditor: View {
                             .help("Leave empty to use ssh-agent/ssh_config (system ssh) or be prompted for a password.")
                         Button("Choose…") { chooseKeyFile() }
                     }
-                    Toggle("Use system ssh (agent, ssh_config, RSA/ECDSA, certificates)",
-                           isOn: $profile.useSystemSSH)
                     Toggle("Strict host-key checking", isOn: $profile.strictHostKey)
-                        .help("Off (default) tolerates re-imaged hosts whose key changed.")
+                        .help("Off (default) tolerates re-imaged hosts whose key changed. Uses the system ssh (agent, ssh_config, all key types).")
                 }
                 Section("Session") {
                     TextField("Command", text: $profile.command)

@@ -29,6 +29,28 @@ final class ZoomControl {
     func fit()        { scrollView?.fit() }
 }
 
+/// Intercepts a connection window's close to ask suspend vs terminate.
+@MainActor
+final class ConnectionWindowDelegate: NSObject, NSWindowDelegate {
+    let id: UUID
+    init(id: UUID) { self.id = id }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard let c = AppState.shared.coordinator, c.isActive(id) else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Disconnect this session?"
+        alert.informativeText = "Suspend keeps your apps running on the server so you can resume "
+            + "later. Terminate ends the session and closes all its apps."
+        alert.addButton(withTitle: "Suspend")
+        alert.addButton(withTitle: "Terminate")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:  Task { await c.close(id, terminate: false) }; return true
+        case .alertSecondButtonReturn: Task { await c.close(id, terminate: true) };  return true
+        default: return false
+        }
+    }
+}
+
 /// Hosts the live remote display (RemoteScrollView + RemoteMetalView) and wires
 /// the window into the clipboard arbiter.
 struct MetalHost: NSViewRepresentable {
@@ -43,9 +65,12 @@ struct MetalHost: NSViewRepresentable {
         let cid = vm.id
         DispatchQueue.main.async {
             mv.window?.makeFirstResponder(mv)
-            if let w = mv.window { ClipboardArbiter.shared.register(window: w, connection: cid) }
-            if wantFs, let w = mv.window, !w.styleMask.contains(.fullScreen) {
-                w.toggleFullScreen(nil)
+            if let w = mv.window {
+                ClipboardArbiter.shared.register(window: w, connection: cid)
+                let del = ConnectionWindowDelegate(id: cid)
+                w.delegate = del
+                vm.windowDelegate = del            // NSWindow.delegate is weak; retain it
+                if wantFs, !w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
             }
         }
         return sv
