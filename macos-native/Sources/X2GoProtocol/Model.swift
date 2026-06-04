@@ -20,6 +20,12 @@ public enum ClipboardMode: String, Sendable, Codable, CaseIterable {
     case both, client, server, none
 }
 
+/// Server-side graphics backend. nxagent is the classic NX path (what this client
+/// renders via nxproxy); kdrive is X2Go's newer x2gokdrive server.
+public enum AgentBackend: String, Sendable, Codable, CaseIterable {
+    case nxagent, kdrive
+}
+
 /// How a profile asks for its display size.
 public enum DisplayMode: Sendable, Codable, Equatable, Hashable {
     case fullscreen

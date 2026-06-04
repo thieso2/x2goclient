@@ -43,8 +43,21 @@ struct ProfileEditor: View {
                         .help("Off (default) tolerates re-imaged hosts whose key changed. Uses the system ssh (agent, ssh_config, all key types).")
                 }
                 Section("Session") {
-                    TextField("Command", text: $profile.command)
+                    HStack {
+                        TextField("Command", text: $profile.command)
+                        Menu("Presets") {
+                            Button("XFCE Desktop") { profile.command = "startxfce4" }
+                            Button("Terminal") { profile.command = "xfce4-terminal" }
+                            Button("File Manager (Thunar)") { profile.command = "thunar" }
+                            Button("GNOME") { profile.command = "gnome-session" }
+                            Button("KDE Plasma") { profile.command = "startplasma-x11" }
+                        }.fixedSize()
+                    }
                     Toggle("Single application (rootless)", isOn: $profile.rootless)
+                    Picker("Display backend", selection: $profile.backend) {
+                        Text("X2Go Agent (NX)").tag(AgentBackend.nxagent)
+                        Text("x2gokdrive (experimental)").tag(AgentBackend.kdrive)
+                    }
                     Picker("Display", selection: $profile.displayKind) {
                         ForEach(SessionProfile.DisplayKind.allCases) { Text($0.label).tag($0) }
                     }

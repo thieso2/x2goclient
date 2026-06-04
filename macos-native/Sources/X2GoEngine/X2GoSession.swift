@@ -31,13 +31,16 @@ public actor X2GoSession {
         public var preferResume: Bool
         /// Strict host-key checking (system ssh). Off = lenient for re-imaged boxes.
         public var strictHostKey: Bool
+        /// Server graphics backend. Only nxagent renders with this client today.
+        public var backend: AgentBackend
 
         public init(endpoint: SSHEndpoint, credentials: [SSHCredential], command: String,
                     kind: SessionKind = .desktop, displayMode: DisplayMode,
                     screen: Geometry, link: LinkSpeed = .lan, pack: String = "16m-jpeg-9",
                     clipboard: ClipboardMode = .both, keyboardLayout: String = "us",
                     disableServerCompositing: Bool = true, tools: ToolPaths,
-                    preferResume: Bool = true, strictHostKey: Bool = false) {
+                    preferResume: Bool = true, strictHostKey: Bool = false,
+                    backend: AgentBackend = .nxagent) {
             self.endpoint = endpoint; self.credentials = credentials; self.command = command
             self.kind = kind; self.displayMode = displayMode; self.screen = screen
             self.link = link; self.pack = pack; self.clipboard = clipboard
@@ -45,6 +48,7 @@ public actor X2GoSession {
             self.disableServerCompositing = disableServerCompositing; self.tools = tools
             self.preferResume = preferResume
             self.strictHostKey = strictHostKey
+            self.backend = backend
         }
     }
 
@@ -97,6 +101,11 @@ public actor X2GoSession {
     }
 
     private func bringUp(chooser: SessionChooser?) async throws {
+        // x2gokdrive uses a different display protocol than NX, which this client
+        // renders via nxproxy — so it can't display a kdrive session yet.
+        if config.backend == .kdrive {
+            throw EngineError.unsupported("The x2gokdrive backend isn't supported by this client yet. Choose “X2Go Agent (NX)”.")
+        }
         phase = .connecting
         try await ssh.connect()
 
@@ -307,11 +316,13 @@ public enum EngineError: Error, CustomStringConvertible, LocalizedError {
     case badReply(String)
     case xvfbFailed(String)
     case cancelled
+    case unsupported(String)
     public var description: String {
         switch self {
         case .badReply(let s): return "unexpected server reply: \(s)"
         case .xvfbFailed(let d): return "Xvfb \(d) did not come up"
         case .cancelled: return "cancelled"
+        case .unsupported(let m): return m
         }
     }
     public var errorDescription: String? { description }

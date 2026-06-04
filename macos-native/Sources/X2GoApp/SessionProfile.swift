@@ -35,6 +35,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
     var speed: LinkSpeed = .lan
     var clipboard: ClipboardMode = .both
     var keyboardLayout: String = "us"
+    var backend: AgentBackend = .nxagent
     /// Strict host-key checking. Off (default) is lenient — handy for re-imaged
     /// LAN/dev boxes whose host key changes.
     var strictHostKey: Bool = false
@@ -74,6 +75,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
         speed = g(.speed, .lan)
         clipboard = g(.clipboard, .both)
         keyboardLayout = g(.keyboardLayout, "us")
+        backend = g(.backend, .nxagent)
         strictHostKey = g(.strictHostKey, false)
     }
 
@@ -92,6 +94,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
             disableServerCompositing: true,
             tools: tools,
             preferResume: true,
-            strictHostKey: strictHostKey)
+            strictHostKey: strictHostKey,
+            backend: backend)
     }
 }

@@ -16,61 +16,41 @@ struct SessionManagerView: View {
     @State private var isNew = false
     @State private var passwordFor: SessionProfile?
     @State private var disconnecting: SessionProfile?
-    @State private var search = ""
-    @State private var importNote: String?
+    @State private var deleteTarget: SessionProfile?
 
     private var filtered: [SessionProfile] {
-        let items = store.profiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        guard !search.isEmpty else { return items }
-        return items.filter {
-            $0.name.localizedCaseInsensitiveContains(search)
-            || $0.host.localizedCaseInsensitiveContains(search)
-            || $0.user.localizedCaseInsensitiveContains(search)
-        }
+        store.profiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private let columns = [GridItem(.adaptive(minimum: 260, maximum: 340), spacing: 16)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search sessions", text: $search).textFieldStyle(.plain)
-                Spacer()
-                Menu {
-                    Button("Import from old X2Go client…") { runImport() }
-                } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize()
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    AddSessionCard { newProfile() }
-                    ForEach(filtered) { profile in
-                        ProfileCard(
-                            profile: profile,
-                            vm: coordinator.connection(for: profile.id),
-                            selected: selection == profile.id,
-                            onEdit: { edit(profile) },
-                            onOpen: { activate(profile) },
-                            onClose: { disconnecting = profile },
-                            onDelete: { deleteProfile(profile) })
-                        .onTapGesture { selection = profile.id }
-                        .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
-                        .contextMenu {
-                            Button("Connect / Show") { activate(profile) }
-                            Button("Edit…") { edit(profile) }
-                            if coordinator.isActive(profile.id) {
-                                Button("Disconnect") { disconnecting = profile }
-                            }
-                            Divider()
-                            Button("Delete", role: .destructive) { deleteProfile(profile) }
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 16) {
+                AddSessionCard { newProfile() }
+                ForEach(filtered) { profile in
+                    ProfileCard(
+                        profile: profile,
+                        vm: coordinator.connection(for: profile.id),
+                        selected: selection == profile.id,
+                        onEdit: { edit(profile) },
+                        onOpen: { activate(profile) },
+                        onClose: { disconnecting = profile },
+                        onDelete: { deleteTarget = profile })
+                    .onTapGesture { selection = profile.id }
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
+                    .contextMenu {
+                        Button("Connect / Show") { activate(profile) }
+                        Button("Edit…") { edit(profile) }
+                        if coordinator.isActive(profile.id) {
+                            Button("Disconnect") { disconnecting = profile }
                         }
+                        Divider()
+                        Button("Delete", role: .destructive) { deleteTarget = profile }
                     }
                 }
-                .padding(20)
             }
+            .padding(20)
         }
         .frame(minWidth: 760, minHeight: 480)
         .navigationTitle("X2Go Sessions")
@@ -106,9 +86,13 @@ struct SessionManagerView: View {
         } message: { _ in
             Text("Suspend keeps your apps running on the server (resume later). Terminate ends the session.")
         }
-        .alert("Import", isPresented: .constant(importNote != nil)) {
-            Button("OK") { importNote = nil }
-        } message: { Text(importNote ?? "") }
+        .confirmationDialog("Delete “\(deleteTarget?.name ?? "")”?",
+                            isPresented: Binding(get: { deleteTarget != nil },
+                                                 set: { if !$0 { deleteTarget = nil } }),
+                            presenting: deleteTarget) { p in
+            Button("Delete", role: .destructive) { deleteProfile(p) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in Text("This removes the saved session. It can't be undone.") }
     }
 
     private func deleteProfile(_ p: SessionProfile) {
@@ -118,11 +102,6 @@ struct SessionManagerView: View {
 
     private func newProfile() { isNew = true; editing = SessionProfile() }
     private func edit(_ p: SessionProfile) { isNew = false; editing = p }
-
-    private func runImport() {
-        let n = store.importLegacy()
-        importNote = n > 0 ? "Imported \(n) session\(n == 1 ? "" : "s")." : "No new sessions found to import."
-    }
 
     /// Connect (or, if already live, just bring the window to the front).
     private func activate(_ p: SessionProfile) {
