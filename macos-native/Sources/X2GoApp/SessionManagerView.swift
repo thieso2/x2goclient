@@ -60,8 +60,11 @@ struct SessionManagerView: View {
             }
         }
         .sheet(item: $passwordFor) { profile in
-            PasswordPrompt(profileName: profile.name) { password in
-                coordinator.connectIfNeeded(profile: profile, credentials: [.password(password)])
+            PasswordPrompt(profileName: profile.name) { password, remember in
+                if remember { KeychainStore.savePassword(password, for: profile) }
+                else { KeychainStore.deletePassword(for: profile) }
+                coordinator.connectIfNeeded(profile: profile, credentials: [.password(password)],
+                                            rememberedPassword: remember)
             }
         }
         .onChange(of: coordinator.windowToOpen) { _, newID in
@@ -99,6 +102,7 @@ struct SessionManagerView: View {
 
     private func deleteProfile(_ p: SessionProfile) {
         store.delete(p)
+        KeychainStore.deletePassword(for: p)
         if selection == p.id { selection = nil }
     }
 
@@ -116,6 +120,10 @@ struct SessionManagerView: View {
         if let key = p.keyPath, !key.isEmpty {
             let path = (key as NSString).expandingTildeInPath
             coordinator.connectIfNeeded(profile: p, credentials: [.privateKeyFile(URL(fileURLWithPath: path))])
+        } else if let saved = KeychainStore.password(for: p) {
+            // Use the remembered password; if it turns out wrong it's cleared and
+            // the next connect will prompt again.
+            coordinator.connectIfNeeded(profile: p, credentials: [.password(saved)], rememberedPassword: true)
         } else {
             passwordFor = p
         }
@@ -200,16 +208,18 @@ struct ProfileCard: View {
 
 struct PasswordPrompt: View {
     let profileName: String
-    let onSubmit: (String) -> Void
+    let onSubmit: (String, Bool) -> Void      // (password, rememberInKeychain)
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
-    private func submit() { guard !password.isEmpty else { return }; onSubmit(password); dismiss() }
+    @State private var remember = true
+    private func submit() { guard !password.isEmpty else { return }; onSubmit(password, remember); dismiss() }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Password for \(profileName)").font(.headline)
             SecureField("Password", text: $password)
                 .textFieldStyle(.roundedBorder).frame(width: 280)
                 .onSubmit(submit)
+            Toggle("Remember password in Keychain", isOn: $remember)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

@@ -29,7 +29,8 @@ final class SessionCoordinator {
     /// Start a connection for a profile if one isn't already live. Idempotent:
     /// the window value is the profile id, so opening it again just brings the
     /// existing window to the front.
-    func connectIfNeeded(profile: SessionProfile, credentials: [SSHCredential]) {
+    func connectIfNeeded(profile: SessionProfile, credentials: [SSHCredential],
+                         rememberedPassword: Bool = false) {
         guard connections[profile.id] == nil else { return }
         var config = profile.makeConfig(screen: Self.screenGeometry(), tools: tools, credentials: credentials)
         // The Xvfb keymap must match what the user types on, or ä/ö/ü/ß etc. have
@@ -39,6 +40,15 @@ final class SessionCoordinator {
         let vm = ConnectionViewModel(profileID: profile.id, config: config, title: profile.name,
                                      qualityLabel: quality)
         vm.onReady = { [weak self] id in self?.windowToOpen = id }
+        if rememberedPassword {
+            // If the remembered password is rejected, forget it so the next connect prompts.
+            vm.onFailure = { msg in
+                let m = msg.lowercased()
+                if m.contains("denied") || m.contains("password") || m.contains("auth") {
+                    KeychainStore.deletePassword(for: profile)
+                }
+            }
+        }
         connections[profile.id] = vm
         vm.connect()
     }

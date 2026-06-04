@@ -47,6 +47,9 @@ final class ConnectionViewModel: Identifiable {
     private var choiceCont: CheckedContinuation<X2GoSession.SessionChoice, Never>?
     /// Called when the window should appear (connected, or a chooser is pending).
     var onReady: ((UUID) -> Void)?
+    /// Called with the failure message when the connection fails (used to forget a
+    /// wrong remembered password).
+    var onFailure: ((String) -> Void)?
     /// Retains the per-window close delegate (NSWindow.delegate is weak).
     var windowDelegate: AnyObject?
 
@@ -114,6 +117,7 @@ final class ConnectionViewModel: Identifiable {
                 self.startStatsLoop()
             } catch {
                 self.state = .failed(error.localizedDescription)
+                self.onFailure?(error.localizedDescription)
             }
         }
     }
