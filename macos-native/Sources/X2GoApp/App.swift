@@ -40,11 +40,9 @@ struct MetalHost: NSViewRepresentable {
         let sv = RemoteScrollView(metalView: mv, sessionSize: vm.sessionSize)
         vm.zoom.scrollView = sv
         let wantFs = vm.wantFullscreen
-        let title = vm.title
         let cid = vm.id
         DispatchQueue.main.async {
             mv.window?.makeFirstResponder(mv)
-            if !title.isEmpty { mv.window?.title = title }
             if let w = mv.window { ClipboardArbiter.shared.register(window: w, connection: cid) }
             if wantFs, let w = mv.window, !w.styleMask.contains(.fullScreen) {
                 w.toggleFullScreen(nil)
@@ -75,6 +73,7 @@ struct ConnectionView: View {
                 }.padding()
             }
         }
+        .navigationTitle(vm.windowTitle)   // live: name + transfer stats
     }
 }
 

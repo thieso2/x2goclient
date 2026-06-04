@@ -85,19 +85,23 @@ public actor SSHConnection {
         return (channel, handler)
     }
 
-    /// Run a remote command and collect its stdout/stderr/exit status. Auth
-    /// failures surface here (the child-channel creation fails).
+    /// Run a remote command and collect its stdout/stderr/exit status (async).
+    /// Auth/channel-creation failures surface here too.
     public func exec(_ command: String) async throws -> ExecResult {
         let (channel, handler) = try await sshHandler()
-        let resultPromise = channel.eventLoop.makePromise(of: ExecResult.self)
-        let childPromise = channel.eventLoop.makePromise(of: Channel.self)
-        channel.eventLoop.execute {
-            handler.createChannel(childPromise, channelType: .session) { child, _ in
-                child.pipeline.addHandler(ExecHandler(command: command, promise: resultPromise))
+        return try await withCheckedThrowingContinuation { cont in
+            // The only EventLoopPromise we keep: swift-nio-ssh's createChannel
+            // requires one to report channel-creation failure. The command's
+            // result is delivered via ExecHandler's async callback.
+            let creation = channel.eventLoop.makePromise(of: Channel.self)
+            creation.futureResult.whenFailure { cont.resume(throwing: $0) }
+            let handlerObj = ExecHandler(command: command) { cont.resume(with: $0) }
+            channel.eventLoop.execute {
+                handler.createChannel(creation, channelType: .session) { child, _ in
+                    child.pipeline.addHandler(handlerObj)
+                }
             }
         }
-        childPromise.futureResult.whenFailure { resultPromise.fail($0) }
-        return try await resultPromise.futureResult.get()
     }
 
     /// Open a local listener on 127.0.0.1:`localPort`; each inbound connection is

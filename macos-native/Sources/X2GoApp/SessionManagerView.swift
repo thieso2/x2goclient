@@ -2,13 +2,15 @@ import SwiftUI
 import X2GoProtocol
 import X2GoSSH
 
-/// Modern session manager: a grid of profile cards with create/edit/delete/
-/// connect + legacy import. Connecting opens a per-connection window.
+/// Modern session manager: a grid of profile cards (each with edit / open /
+/// close actions and a live status), plus create/delete/import. At most one live
+/// connection per profile; opening an active one brings its window to the front.
 struct SessionManagerView: View {
     @Bindable var store: ProfileStore
     let coordinator: SessionCoordinator
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var selection: UUID?
     @State private var editing: SessionProfile?
     @State private var isNew = false
@@ -26,7 +28,7 @@ struct SessionManagerView: View {
         }
     }
 
-    private let columns = [GridItem(.adaptive(minimum: 240, maximum: 320), spacing: 16)]
+    private let columns = [GridItem(.adaptive(minimum: 260, maximum: 340), spacing: 16)]
 
     var body: some View {
         Group {
@@ -36,39 +38,42 @@ struct SessionManagerView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(filtered) { profile in
-                            ProfileCard(profile: profile, selected: selection == profile.id)
-                                .onTapGesture { selection = profile.id }
-                                .onTapGesture(count: 2) { connect(profile) }
-                                .contextMenu {
-                                    Button("Connect") { connect(profile) }
-                                    Button("Edit…") { edit(profile) }
-                                    Divider()
-                                    Button("Delete", role: .destructive) { store.delete(profile) }
+                            ProfileCard(
+                                profile: profile,
+                                vm: coordinator.connection(for: profile.id),
+                                selected: selection == profile.id,
+                                onEdit: { edit(profile) },
+                                onOpen: { activate(profile) },
+                                onClose: { dismissWindow(id: "connection", value: profile.id) })
+                            .onTapGesture { selection = profile.id }
+                            .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
+                            .contextMenu {
+                                Button("Connect / Show") { activate(profile) }
+                                Button("Edit…") { edit(profile) }
+                                if coordinator.isActive(profile.id) {
+                                    Button("Disconnect") { dismissWindow(id: "connection", value: profile.id) }
                                 }
+                                Divider()
+                                Button("Delete", role: .destructive) { store.delete(profile) }
+                            }
                         }
                     }
                     .padding(20)
                 }
             }
         }
-        .frame(minWidth: 720, minHeight: 460)
+        .frame(minWidth: 760, minHeight: 480)
         .searchable(text: $search, placement: .toolbar, prompt: "Search sessions")
         .toolbar {
             ToolbarItemGroup {
                 Button { newProfile() } label: { Label("New", systemImage: "plus") }
-                Button { if let p = selected { edit(p) } } label: { Label("Edit", systemImage: "pencil") }
-                    .disabled(selected == nil)
                 Button { if let p = selected { store.delete(p); selection = nil } } label: {
                     Label("Delete", systemImage: "trash")
                 }.disabled(selected == nil)
-                Spacer()
-                Button { if let p = selected { connect(p) } } label: { Label("Connect", systemImage: "bolt.fill") }
-                    .disabled(selected == nil)
             }
             ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button("Import from old X2Go client…") { runImport() }
-                } label: { Label("More", systemImage: "ellipsis.circle") }
+                Menu { Button("Import from old X2Go client…") { runImport() } }
+                    label: { Label("More", systemImage: "ellipsis.circle") }
             }
         }
         .navigationTitle("X2Go Sessions")
@@ -79,8 +84,8 @@ struct SessionManagerView: View {
         }
         .sheet(item: $passwordFor) { profile in
             PasswordPrompt(profileName: profile.name) { password in
-                let id = coordinator.connect(profile: profile, credentials: [.password(password)])
-                openWindow(id: "connection", value: id)
+                coordinator.connectIfNeeded(profile: profile, credentials: [.password(password)])
+                openWindow(id: "connection", value: profile.id)
             }
         }
         .alert("Import", isPresented: .constant(importNote != nil)) {
@@ -94,8 +99,7 @@ struct SessionManagerView: View {
         VStack(spacing: 14) {
             Image(systemName: "display").font(.system(size: 48)).foregroundStyle(.secondary)
             Text("No sessions yet").font(.title2)
-            Text("Create a session or import from the old X2Go client.")
-                .foregroundStyle(.secondary)
+            Text("Create a session or import from the old X2Go client.").foregroundStyle(.secondary)
             HStack {
                 Button("New Session") { newProfile() }.buttonStyle(.borderedProminent)
                 Button("Import…") { runImport() }
@@ -112,37 +116,73 @@ struct SessionManagerView: View {
         importNote = n > 0 ? "Imported \(n) session\(n == 1 ? "" : "s")." : "No new sessions found to import."
     }
 
-    private func connect(_ p: SessionProfile) {
+    /// Connect (or, if already live, just bring the window to the front).
+    private func activate(_ p: SessionProfile) {
+        if coordinator.isActive(p.id) {
+            openWindow(id: "connection", value: p.id)   // dedups -> brings to front
+            return
+        }
         if let key = p.keyPath, !key.isEmpty {
             let path = (key as NSString).expandingTildeInPath
-            let id = coordinator.connect(profile: p, credentials: [.privateKeyFile(URL(fileURLWithPath: path))])
-            openWindow(id: "connection", value: id)
+            coordinator.connectIfNeeded(profile: p, credentials: [.privateKeyFile(URL(fileURLWithPath: path))])
+            openWindow(id: "connection", value: p.id)
         } else {
             passwordFor = p
         }
     }
 }
 
+/// A profile tile with a live status badge and edit / open / close actions.
 struct ProfileCard: View {
     let profile: SessionProfile
+    let vm: ConnectionViewModel?
     let selected: Bool
+    let onEdit: () -> Void
+    let onOpen: () -> Void
+    let onClose: () -> Void
+
+    private var statusColor: Color {
+        guard let vm else { return .secondary.opacity(0.4) }
+        switch vm.state {
+        case .connecting: return .yellow
+        case .connected: return .green
+        case .failed: return .red
+        }
+    }
+    private var statusText: String { vm?.dashboardStatus ?? "Not connected" }
+    private var isActive: Bool { vm != nil }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "display").font(.title2).foregroundStyle(.tint)
                 Spacer()
-                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                Circle().fill(statusColor).frame(width: 9, height: 9)
             }
             Text(profile.name).font(.headline).lineLimit(1)
             Text(profile.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-            Text(profile.command).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            Text(statusText).font(.caption).foregroundStyle(isActive ? .primary : .tertiary).lineLimit(1)
+
+            Divider().padding(.vertical, 2)
+            HStack(spacing: 16) {
+                Button(action: onEdit) { Image(systemName: "pencil") }
+                    .help("Edit")
+                Button(action: onOpen) { Image(systemName: isActive ? "macwindow.on.rectangle" : "bolt.fill") }
+                    .help(isActive ? "Bring to front" : "Connect")
+                Spacer()
+                Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
+                    .help("Disconnect")
+                    .foregroundStyle(.red)
+                    .disabled(!isActive)
+            }
+            .buttonStyle(.borderless)
+            .imageScale(.large)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
     }
 }
 

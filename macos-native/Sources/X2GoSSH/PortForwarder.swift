@@ -7,13 +7,25 @@ import NIOSSH
 /// SSH channel — i.e. `ssh -L localPort:remoteHost:remotePort`, in pure Swift.
 /// This is the NX tunnel: nxproxy connects to 127.0.0.1:localPort and its bytes
 /// flow over SSH to the remote nxagent.
+/// Thread-safe byte counter shared by a tunnel's two glue handlers.
+public final class ByteCounter: @unchecked Sendable {
+    private var v = 0
+    private let lock = NSLock()
+    func add(_ n: Int) { lock.lock(); v += n; lock.unlock() }
+    public var total: Int { lock.lock(); defer { lock.unlock() }; return v }
+}
+
 public final class PortForwarder: @unchecked Sendable {
     private let serverChannel: Channel
     public let localPort: Int
+    private let counter: ByteCounter
+    /// Total bytes forwarded through the tunnel (both directions).
+    public var bytesTransferred: Int { counter.total }
 
-    private init(serverChannel: Channel, localPort: Int) {
+    private init(serverChannel: Channel, localPort: Int, counter: ByteCounter) {
         self.serverChannel = serverChannel
         self.localPort = localPort
+        self.counter = counter
     }
 
     public func close() async {
@@ -24,8 +36,9 @@ public final class PortForwarder: @unchecked Sendable {
         group: EventLoopGroup, sshChannel: Channel, sshHandler: NIOSSHHandler,
         localPort: Int, remoteHost: String, remotePort: Int
     ) async throws -> PortForwarder {
+        let counter = ByteCounter()
         let ctx = ForwardContext(sshChannel: sshChannel, sshHandler: sshHandler,
-                                 remoteHost: remoteHost, remotePort: remotePort)
+                                 remoteHost: remoteHost, remotePort: remotePort, counter: counter)
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { inbound in
@@ -33,7 +46,7 @@ public final class PortForwarder: @unchecked Sendable {
             }
         let server = try await bootstrap.bind(host: "127.0.0.1", port: localPort).get()
         let actualPort = server.localAddress?.port ?? localPort
-        return PortForwarder(serverChannel: server, localPort: actualPort)
+        return PortForwarder(serverChannel: server, localPort: actualPort, counter: counter)
     }
 }
 
@@ -44,9 +57,10 @@ private final class ForwardContext: @unchecked Sendable {
     let sshHandler: NIOSSHHandler
     let remoteHost: String
     let remotePort: Int
-    init(sshChannel: Channel, sshHandler: NIOSSHHandler, remoteHost: String, remotePort: Int) {
+    let counter: ByteCounter
+    init(sshChannel: Channel, sshHandler: NIOSSHHandler, remoteHost: String, remotePort: Int, counter: ByteCounter) {
         self.sshChannel = sshChannel; self.sshHandler = sshHandler
-        self.remoteHost = remoteHost; self.remotePort = remotePort
+        self.remoteHost = remoteHost; self.remotePort = remotePort; self.counter = counter
     }
 
     func bridge(inbound: Channel) -> EventLoopFuture<Void> {
@@ -59,8 +73,9 @@ private final class ForwardContext: @unchecked Sendable {
         sshHandler.createChannel(childPromise, channelType: type) { child, _ in
             child.pipeline.addHandler(SSHChannelByteCodec())
         }
+        let counter = self.counter
         return childPromise.futureResult.flatMap { child -> EventLoopFuture<Void> in
-            let (a, b) = GlueHandler.matchedPair()
+            let (a, b) = GlueHandler.matchedPair(counter: counter)
             let f1 = inbound.pipeline.addHandler(a)
             let f2 = child.pipeline.addHandler(b)   // after the codec -> speaks ByteBuffer
             return f1.and(f2).map { _ in }
@@ -108,10 +123,12 @@ final class GlueHandler: ChannelDuplexHandler {
 
     private var context: ChannelHandlerContext?
     private weak var partner: GlueHandler?
+    private var counter: ByteCounter?
 
-    static func matchedPair() -> (GlueHandler, GlueHandler) {
+    static func matchedPair(counter: ByteCounter) -> (GlueHandler, GlueHandler) {
         let a = GlueHandler(), b = GlueHandler()
         a.partner = b; b.partner = a
+        a.counter = counter; b.counter = counter
         return (a, b)
     }
 
@@ -119,7 +136,9 @@ final class GlueHandler: ChannelDuplexHandler {
     func handlerRemoved(context: ChannelHandlerContext) { self.context = nil }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        partner?.forward(unwrapInboundIn(data))
+        let buf = unwrapInboundIn(data)
+        counter?.add(buf.readableBytes)
+        partner?.forward(buf)
     }
 
     private func forward(_ buf: ByteBuffer) {

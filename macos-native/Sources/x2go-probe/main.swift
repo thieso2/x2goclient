@@ -145,6 +145,19 @@ do {
         if fraction < 0.02 { print("FAIL: frame essentially black"); exit(1) }
         print("OK: live desktop streamed into the Swift engine, no XQuartz")
 
+    case "bench":
+        let conn = SSHConnection(endpoint: endpoint, credentials: creds)
+        try await conn.connect()
+        let mb = Int(flag("--mb") ?? "200") ?? 200
+        let cmd = "dd if=/dev/zero bs=1M count=\(mb) 2>/dev/null"
+        let start = DispatchTime.now()
+        let r = try await conn.exec(cmd)
+        let secs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e9
+        let bytes = r.stdout.count
+        print(String(format: "swift-nio-ssh: %d bytes in %.2fs = %.1f MB/s",
+                     bytes, secs, Double(bytes) / 1e6 / max(secs, 0.001)))
+        await conn.disconnect()
+
     default:
         print("unknown subcommand: \(sub)"); exit(2)
     }

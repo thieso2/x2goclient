@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import X2GoProtocol
 
 /// Create/edit a SessionProfile.
@@ -13,6 +14,18 @@ struct ProfileEditor: View {
                 set: { profile.keyPath = $0.isEmpty ? nil : $0 })
     }
 
+    private func chooseKeyFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = "Choose an SSH private key"
+        let sshDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
+        if FileManager.default.fileExists(atPath: sshDir.path) { panel.directoryURL = sshDir }
+        if panel.runModal() == .OK, let url = panel.url { profile.keyPath = url.path }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Form {
@@ -21,8 +34,11 @@ struct ProfileEditor: View {
                     TextField("Host", text: $profile.host)
                     TextField("SSH port", value: $profile.sshPort, format: .number)
                     TextField("User", text: $profile.user)
-                    TextField("Private key path (optional)", text: keyBinding)
-                        .help("Leave empty to be prompted for a password on connect.")
+                    HStack {
+                        TextField("Private key (optional)", text: keyBinding)
+                            .help("Leave empty to be prompted for a password on connect.")
+                        Button("Choose…") { chooseKeyFile() }
+                    }
                 }
                 Section("Session") {
                     TextField("Command", text: $profile.command)
@@ -35,12 +51,24 @@ struct ProfileEditor: View {
                         TextField("Height", value: $profile.height, format: .number)
                     }
                 }
+                Section("NX connection") {
+                    Picker("Link speed", selection: $profile.speed) {
+                        ForEach(LinkSpeed.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
+                    }
+                    Picker("Image quality", selection: $profile.quality) {
+                        ForEach(0...9, id: \.self) { q in
+                            Text(q == 0 ? "0 (lowest)" : q == 9 ? "9 (best)" : "\(q)").tag(q)
+                        }
+                    }
+                    Picker("Compression", selection: $profile.pack) {
+                        ForEach(["16m-jpeg", "16m-png", "16m-rgb", "256-png", "2-adaptive"], id: \.self) {
+                            Text($0).tag($0)
+                        }
+                    }
+                }
                 Section("Advanced") {
                     Picker("Clipboard", selection: $profile.clipboard) {
                         ForEach(ClipboardMode.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-                    }
-                    Picker("Link speed", selection: $profile.speed) {
-                        ForEach(LinkSpeed.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
                     }
                     TextField("Keyboard layout", text: $profile.keyboardLayout)
                 }

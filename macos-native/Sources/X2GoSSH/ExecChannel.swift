@@ -10,20 +10,26 @@ final class ExecHandler: ChannelInboundHandler {
     typealias InboundOut = SSHChannelData
 
     private let command: String
-    private let promise: EventLoopPromise<ExecResult>
+    private let onResult: @Sendable (Result<ExecResult, Error>) -> Void
     private var stdout = Data()
     private var stderr = Data()
     private var exitStatus: Int32 = -1
     private var completed = false
 
-    init(command: String, promise: EventLoopPromise<ExecResult>) {
+    init(command: String, onResult: @escaping @Sendable (Result<ExecResult, Error>) -> Void) {
         self.command = command
-        self.promise = promise
+        self.onResult = onResult
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
         context.channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
-            .whenFailure { [promise] in promise.fail($0) }
+            .whenComplete { _ in }
+    }
+
+    private func complete(_ result: Result<ExecResult, Error>) {
+        guard !completed else { return }
+        completed = true
+        onResult(result)
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -56,13 +62,11 @@ final class ExecHandler: ChannelInboundHandler {
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        if !completed { completed = true; promise.fail(error) }
+        complete(.failure(error))
         context.close(promise: nil)
     }
 
     private func finish() {
-        guard !completed else { return }
-        completed = true
-        promise.succeed(ExecResult(stdout: stdout, stderr: stderr, exitStatus: exitStatus))
+        complete(.success(ExecResult(stdout: stdout, stderr: stderr, exitStatus: exitStatus)))
     }
 }

@@ -65,6 +65,9 @@ public actor X2GoSession {
         self.ssh = SSHConnection(endpoint: config.endpoint, credentials: config.credentials)
     }
 
+    /// Total bytes carried over the NX tunnel (both directions), for stats.
+    public func transferredBytes() -> Int { forwarder?.bytesTransferred ?? 0 }
+
     // MARK: - Bring-up
 
     public func start() async throws {
