@@ -1,36 +1,47 @@
-# Native macOS display (x2goclient ↔ viewer)
+# Native macOS X2Go client
 
-The macOS display path on the `macos-native-metal` branch: how the Qt client
-presents a remote X2Go session as a native Metal window, with no XQuartz.
-See `docs/adr/` for the decisions behind it.
+The macOS client is now a single, modern **Swift/SwiftUI app** (`X2GoApp`) — no
+Qt, no libssh, no separate viewer process, no XQuartz. It manages multiple
+connections in-process, each forking its own headless Xvfb and rendering the
+remote desktop in-app via Metal. The only native code is the bundled `nxproxy`
+(NX codec) + `Xvfb` binaries and the small `CX11` Xlib/XTEST bridge.
+See `docs/adr/` for decisions and `IMPLEMENTATION-viewer-lifecycle.md` history.
 
 ## Language
 
-**Viewer**:
-The native macOS display application (`X2GoNative`) — a SwiftUI/Metal window that
-presents one session display's framebuffer and forwards macOS input into it. One
-viewer per connection.
-_Avoid_: window, X2GoNative (in prose), Metal client
-
-**x2goclient**:
-The Qt client (`x2goclient.real`) that orchestrates the connection and owns the
-lifecycle of each session display and viewer.
-_Avoid_: the app, the client, x2goapp
-
-**Session display**:
-A private, headless X server (`Xvfb`) that one connection renders into via
-nxproxy. Its root size equals the session geometry; a mismatch corrupts the
-nxproxy replay. One per connection.
-_Avoid_: X server, Xvfb (in prose), display
+**X2GoApp**:
+The native SwiftUI macOS client (the whole app). Replaces the Qt `x2goclient`
+*and* the old standalone Metal viewer on macOS.
+_Avoid_: x2goclient (that's the retired Qt app), the viewer, x2goapp
 
 **Connection**:
-One active X2Go session started in x2goclient. Single concurrent connection
-today; the per-connection shape is what makes multiple possible later.
-_Avoid_: session (when the local trio is meant), tab
+One live X2Go session the user has opened — its own window, Xvfb, NX tunnel,
+nxproxy, and X11Session. Modelled by a `ConnectionViewModel` + an engine
+`X2GoSession`. Multiple may run at once.
+_Avoid_: session (when the local stack is meant), tab, window
 
-**Session geometry**:
-The pixel size the remote session renders at, resolved by x2goclient from the
-connection's profile (explicit `WxH`, or the Mac screen's logical points for
-`fullscreen`/`maxdim`). May exceed the Mac screen, in which case the viewer
-scales and/or scrolls.
-_Avoid_: resolution, screen size, window size
+**Engine** (`X2GoSession`):
+The per-connection orchestration actor: SSH connect/auth, start/resume the remote
+agent, fork Xvfb, open the NX tunnel, launch nxproxy, run the desktop, and
+suspend/terminate. Lives in the `X2GoEngine` module.
+_Avoid_: backend, controller
+
+**Session display**:
+The private, headless `Xvfb` one connection renders into via nxproxy. Its root
+size equals the resolved session geometry. One per connection.
+_Avoid_: X server, Xvfb (in prose), display
+
+**Session Manager**:
+The app's home window: a grid of profile cards to create/edit/delete and connect.
+_Avoid_: session list, dashboard
+
+**Profile** (`SessionProfile`):
+Saved connection settings (host, user, key, command, display size, …), stored as
+Codable JSON in Application Support and one-time-imported from the old
+`~/.x2goclient/sessions` INI.
+_Avoid_: session config, bookmark
+
+**NX tunnel**:
+The SSH local port-forward (pure-Swift, directTCPIP over swift-nio-ssh) carrying
+the NX stream between local nxproxy and the remote nxagent.
+_Avoid_: graphics tunnel, port forward (in prose)

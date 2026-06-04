@@ -447,6 +447,34 @@ renders in the Metal window; Fit/zoom/scrollbars/fullscreen UX; clean
 window-close → suspend (couldn't simulate a graceful exit via signal); input
 fidelity under scale.
 
+## Milestone: full rewrite — monolithic SwiftUI app, pure-Swift SSH, no Qt
+
+The macOS client is now a single Swift/SwiftUI app (`X2GoApp`) — no Qt, no
+libssh, no separate viewer, no XQuartz. See `docs/adr/0003-monolithic-swiftui-
+pure-swift-ssh.md`. Package layout: `CX11` (only C), `X2GoDisplay`,
+`X2GoProtocol`, `X2GoSSH`, `X2GoEngine`, `X2GoApp`, `x2go-probe`.
+
+Phases, each verified against the live server (10.248.1.20):
+- **P0** package reshape — graph builds; dropped Citadel for Apple swift-nio-ssh.
+- **P1 (gate)** pure-Swift SSH — `SSHConnection` (ed25519/password auth, exec) +
+  `PortForwarder` (NIO listener ↔ directTCPIP). `x2go-probe exec` ran
+  x2golistsessions; `forward` round-tripped the server SSH banner. **Top risk retired.**
+- **P2** `X2GoProtocol` — startagent/resume/runcommand/list/suspend/terminate +
+  nxproxy options builders/parsers; 9 unit tests vs the exact Qt formats + a real row.
+- **P3** `X2GoEngine.X2GoSession` — connect→list→resume/start→Xvfb→compositing-off→
+  NX tunnel→nxproxy→runcommand→suspend/terminate. `x2go-probe session` captured the
+  live XFCE desktop (1280×800, ~100% non-black) to PNG, clean teardown.
+- **P4** single-window app driving the engine (Xvfb+nxproxy as children, live session).
+- **P5/P6** Session Manager (profile cards, editor, legacy INI import), window-per-
+  connection coordinator, focus-following clipboard arbiter, suspend-on-close/quit.
+- **P7** `build-app.sh` → self-contained signed `dist/X2Go.app`: bundles Xvfb/
+  nxproxy/libXcomp + the /opt dylib closure relinked to @rpath; asserts **0
+  /opt refs and 0 Qt**. Bundled binaries load from within the bundle (verified).
+
+Remaining (interactive, user-verified): clicking Connect in the bundled app and
+the live Metal window UX (zoom/scrollbars/fullscreen, multi-session focus
+clipboard) — the engine + capture path underneath is the same one proven in P3/P4.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**

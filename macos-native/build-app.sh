@@ -1,153 +1,153 @@
 #!/bin/bash
-# Build a FULLY SELF-CONTAINED x2goclient.app that needs NO XQuartz.
+# Build a FULLY SELF-CONTAINED, Qt-free X2Go.app from the SwiftUI app target.
 #
-# It bundles, into a copy of the Qt x2goclient.app:
-#   - Xvfb + xkbcomp          (the framebuffer X server) -> Contents/Resources/x11/bin
-#   - X2GoNative              (native Metal capture/input/clipboard) -> Contents/exe
-#   - the full X11 dylib closure (+ libpng16 for nxproxy) -> Contents/x11libs
-#   - minimal fonts + xkb data -> Contents/Resources/x11/{fonts,xkb}
-#   - a launcher that starts Xvfb + the Metal window, then runs the Qt client.
-# All Mach-O references to /opt/X11 are rewritten to @rpath/@loader_path.
+# Bundles, into a fresh .app skeleton around Contents/MacOS/X2GoApp:
+#   - Xvfb + xkbcomp + setxkbmap        -> Contents/Resources/x11/bin
+#   - nxproxy (+ .real) + libXcomp      -> Contents/exe   (NX codec; the only C)
+#   - the full /opt dylib closure        -> Contents/x11libs   (X11 + jpeg/zlib/png)
+#   - minimal fonts + xkb data           -> Contents/Resources/x11/{fonts,xkb}
+# All /opt Mach-O references are rewritten to @rpath. Asserts the bundle has
+# ZERO /opt refs and ZERO Qt (no Qt*.framework, no Qt* linkage).
 #
-# Output: macos-native/dist/x2goclient.app
-#
-# Distribution (give the app to others):
-#   SIGN_ID="Developer ID Application: Your Name (TEAMID)" \
-#   NOTARY_PROFILE=x2go-notary \           # from: xcrun notarytool store-credentials
-#       ./build-app.sh
-#   (or AC_APPLE_ID=… AC_TEAM_ID=… AC_PASSWORD=… instead of NOTARY_PROFILE)
-# With no SIGN_ID it builds an ad-hoc bundle that runs only on this machine.
-set -uo pipefail   # not -e: many otool/install_name_tool steps are best-effort
+# Output: macos-native/dist/X2Go.app
+#   SIGN_ID="Developer ID Application: …" NOTARY_PROFILE=… ./build-app.sh  (distribute)
+#   (no SIGN_ID -> ad-hoc, runs on this machine only)
+set -uo pipefail   # not -e: many install_name_tool steps are best-effort
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 OPT=/opt/X11
-SRC="$REPO/build-mac/x2goclient.app"
-OUT="$HERE/dist/x2goclient.app"
+NXSRC="$REPO/build-mac/x2goclient.app/Contents/exe"   # working nxproxy + libXcomp
+OUT="$HERE/dist/X2Go.app"
 C="$OUT/Contents"
 LIBS="$C/x11libs"
 X11BIN="$C/Resources/x11/bin"
 X11FONTS="$C/Resources/x11/fonts"
 X11XKB="$C/Resources/x11/xkb"
 
-[ -d "$SRC" ]        || { echo "missing $SRC (build the Qt client first)"; exit 1; }
 [ -x "$OPT/bin/Xvfb" ] || { echo "missing $OPT/bin/Xvfb (XQuartz needed to BUILD the bundle)"; exit 1; }
+[ -f "$NXSRC/nxproxy" ] || { echo "missing nxproxy at $NXSRC"; exit 1; }
 
-echo ">> building X2GoNative (release, arm64)..."
-( cd "$HERE" && swift build -c release --product X2GoNative --arch arm64 ) || { echo "build failed"; exit 1; }
-NATIVE_BIN="$HERE/.build/release/X2GoNative"
+echo ">> building X2GoApp (release, arm64)..."
+( cd "$HERE" && swift build -c release --product X2GoApp --arch arm64 ) || { echo "build failed"; exit 1; }
+APP_BIN="$HERE/.build/release/X2GoApp"
 
-echo ">> copying $SRC -> $OUT ..."
-rm -rf "$OUT"; mkdir -p "$HERE/dist"; cp -R "$SRC" "$OUT"
-mkdir -p "$LIBS" "$X11BIN" "$X11FONTS/misc" "$X11XKB" "$C/exe"
+echo ">> scaffolding $OUT ..."
+rm -rf "$OUT"
+mkdir -p "$C/MacOS" "$LIBS" "$X11BIN" "$X11FONTS/misc" "$X11XKB" "$C/exe" "$C/Resources"
+cp "$APP_BIN" "$C/MacOS/X2GoApp"
+
+cat > "$C/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>X2Go</string>
+  <key>CFBundleDisplayName</key><string>X2Go</string>
+  <key>CFBundleIdentifier</key><string>org.x2go.X2GoMac</string>
+  <key>CFBundleExecutable</key><string>X2GoApp</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+</dict>
+</plist>
+PLIST
 
 cp "$OPT/bin/Xvfb"      "$X11BIN/Xvfb"
 cp "$OPT/bin/xkbcomp"   "$X11BIN/xkbcomp"
-cp "$OPT/bin/setxkbmap" "$X11BIN/setxkbmap"   # to match the macOS keyboard layout
-cp "$NATIVE_BIN"        "$C/exe/X2GoNative"
+cp "$OPT/bin/setxkbmap" "$X11BIN/setxkbmap"
+cp "$NXSRC/nxproxy"      "$C/exe/nxproxy"
+[ -f "$NXSRC/nxproxy.real" ] && cp "$NXSRC/nxproxy.real" "$C/exe/nxproxy.real"
+[ -f "$NXSRC/libXcomp.3.dylib" ] && cp "$NXSRC/libXcomp.3.dylib" "$C/exe/libXcomp.3.dylib"
+[ -f "$NXSRC/nxauth" ] && cp "$NXSRC/nxauth" "$C/exe/nxauth"
 
-# --- gather the full /opt/X11 dylib closure into Contents/x11libs ---
-echo ">> gathering X11 dylib closure..."
-seed_libpng=$(otool -L "$C/exe/nxproxy.real" 2>/dev/null | awk 'NR>1{print $1}' | grep "^$OPT/lib/libpng" | head -1)
-[ -n "$seed_libpng" ] && cp "$seed_libpng" "$LIBS/$(basename "$seed_libpng")" 2>/dev/null || true
+# --- gather the full /opt dylib closure (X11 + homebrew jpeg/zlib/png) ---
+echo ">> gathering dylib closure..."
 add_closure() {
-  local f="$1"
-  otool -L "$f" 2>/dev/null | awk 'NR>1{print $1}' | grep "^$OPT/lib/" | while read -r d; do
-    local b; b="$(basename "$d")"
+  otool -L "$1" 2>/dev/null | awk 'NR>1{print $1}' | grep "^/opt/" | while read -r d; do
+    b="$(basename "$d")"
     [ -f "$LIBS/$b" ] || { cp "$d" "$LIBS/$b" 2>/dev/null && chmod u+w "$LIBS/$b"; }
   done
 }
-for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$X11BIN/setxkbmap" "$C/exe/X2GoNative"; do add_closure "$f"; done
-# fixpoint over the bundled libs (deps of deps)
-for _ in 1 2 3 4 5 6; do for d in "$LIBS"/*.dylib; do add_closure "$d"; done; done
-echo "   bundled $(ls "$LIBS" | wc -l | tr -d ' ') dylibs"
+for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$X11BIN/setxkbmap" "$C/MacOS/X2GoApp" \
+         "$C/exe/nxproxy" "$C/exe/nxproxy.real" "$C/exe/libXcomp.3.dylib" "$C/exe/nxauth"; do
+  [ -f "$f" ] && add_closure "$f"
+done
+for _ in 1 2 3 4 5 6 7 8; do for d in "$LIBS"/*.dylib; do [ -f "$d" ] && add_closure "$d"; done; done
+echo "   bundled $(ls "$LIBS" 2>/dev/null | wc -l | tr -d ' ') dylibs"
 
-# --- rewrite install names to be relocatable (@rpath) ---
+# --- rewrite install names to @rpath ---
 echo ">> relinking to @rpath..."
-chmod -R u+w "$LIBS" "$X11BIN" "$C/exe"
-relink() { # rewrite every /opt/X11/lib ref in $1 to @rpath
-  local f="$1"
-  otool -L "$f" 2>/dev/null | awk 'NR>1{print $1}' | grep "^$OPT/lib/" | while read -r d; do
-    install_name_tool -change "$d" "@rpath/$(basename "$d")" "$f" 2>/dev/null || true
+chmod -R u+w "$LIBS" "$X11BIN" "$C/exe" "$C/MacOS"
+relink() {
+  otool -L "$1" 2>/dev/null | awk 'NR>1{print $1}' | grep "^/opt/" | while read -r d; do
+    install_name_tool -change "$d" "@rpath/$(basename "$d")" "$1" 2>/dev/null || true
   done
 }
-for d in "$LIBS"/*.dylib; do install_name_tool -id "@rpath/$(basename "$d")" "$d" 2>/dev/null || true; relink "$d"; done
-relink "$X11BIN/Xvfb";        install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/Xvfb"
-relink "$X11BIN/xkbcomp";     install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/xkbcomp"
-relink "$X11BIN/setxkbmap";  install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/setxkbmap"
-relink "$C/exe/X2GoNative";   install_name_tool -add_rpath "@executable_path/../x11libs" "$C/exe/X2GoNative"
-# nxproxy (wrapper + real) + libXcomp use only libpng -> point at the bundled copy
-for nx in "$C/exe/nxproxy" "$C/exe/nxproxy.real"; do
+for d in "$LIBS"/*.dylib; do
+  [ -f "$d" ] || continue
+  install_name_tool -id "@rpath/$(basename "$d")" "$d" 2>/dev/null || true
+  relink "$d"
+done
+relink "$X11BIN/Xvfb";       install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/Xvfb" 2>/dev/null || true
+relink "$X11BIN/xkbcomp";    install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/xkbcomp" 2>/dev/null || true
+relink "$X11BIN/setxkbmap";  install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/setxkbmap" 2>/dev/null || true
+relink "$C/MacOS/X2GoApp";   install_name_tool -add_rpath "@executable_path/../x11libs" "$C/MacOS/X2GoApp" 2>/dev/null || true
+for nx in "$C/exe/nxproxy" "$C/exe/nxproxy.real" "$C/exe/libXcomp.3.dylib" "$C/exe/nxauth"; do
   [ -f "$nx" ] || continue
   relink "$nx"; install_name_tool -add_rpath "@executable_path/../x11libs" "$nx" 2>/dev/null || true
 done
-relink "$C/exe/libXcomp.3.dylib" 2>/dev/null || true
 
-# --- minimal fonts + xkb ---
+# --- fonts + xkb ---
 echo ">> bundling fonts + xkb..."
 cp -R "$OPT/share/fonts/misc/." "$X11FONTS/misc/" 2>/dev/null || true
 cp -R "$OPT/share/X11/xkb/."    "$X11XKB/"        2>/dev/null || true
 
-# --- launcher: compiled Mach-O main executable (needed for hardened runtime /
-#     notarization). Real Qt binary -> x2goclient.real. ---
-echo ">> compiling launcher..."
-if [ ! -f "$C/MacOS/x2goclient.real" ]; then mv "$C/MacOS/x2goclient" "$C/MacOS/x2goclient.real"; fi
-clang -arch arm64 -O2 "$HERE/launcher.c" -o "$C/MacOS/x2goclient" \
-  -framework ApplicationServices || { echo "launcher build failed"; exit 1; }
-
-# --- verify self-contained + sign ---
-echo ">> verifying no /opt/X11 references remain in bundled Mach-O..."
+# --- assertions: no /opt refs, and ZERO Qt anywhere ---
+echo ">> verifying self-contained + Qt-free..."
 LEFT=0
-for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$C/exe/X2GoNative" "$C/exe/nxproxy" "$C/exe/nxproxy.real" "$C/exe/libXcomp.3.dylib" "$LIBS"/*.dylib; do
-  [ -f "$f" ] || continue
-  n=$(otool -L "$f" 2>/dev/null | awk 'NR>1{print $1}' | grep -c "^$OPT/" || true); LEFT=$((LEFT+n))
-done
-echo "   remaining /opt/X11 references: $LEFT (want 0)"
+while IFS= read -r f; do
+  n=$(otool -L "$f" 2>/dev/null | awk 'NR>1{print $1}' | grep -c "^/opt/" || true); LEFT=$((LEFT+n))
+done < <(find "$OUT" -type f \( -name '*.dylib' -o -perm -u+x \) 2>/dev/null)
+echo "   remaining /opt references: $LEFT (want 0)"
+QTLINK=0
+while IFS= read -r f; do
+  n=$(otool -L "$f" 2>/dev/null | grep -ci "Qt" || true); QTLINK=$((QTLINK+n))
+done < <(find "$OUT" -type f \( -name '*.dylib' -o -perm -u+x \) 2>/dev/null)
+QTFW=$(find "$OUT" -iname 'Qt*.framework' 2>/dev/null | wc -l | tr -d ' ')
+echo "   Qt linkage: $QTLINK, Qt frameworks: $QTFW (want 0/0)"
+if [ "$QTLINK" != 0 ] || [ "$QTFW" != 0 ]; then
+  echo "!! Qt detected in the bundle — failing the build (this app must be Qt-free)."; exit 1
+fi
 
 # --- codesign (+ optional notarize) ---
-# Set SIGN_ID="Developer ID Application: Name (TEAMID)" to sign for distribution.
-# Also set NOTARY_PROFILE (a `notarytool store-credentials` profile) OR
-# AC_APPLE_ID + AC_TEAM_ID + AC_PASSWORD to notarize + staple.
-# With SIGN_ID unset, falls back to ad-hoc (runs locally only).
 SIGN_ID="${SIGN_ID:-}"
-# Auto-detect a "Developer ID Application" identity if SIGN_ID wasn't given.
 if [ -z "$SIGN_ID" ]; then
-  SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
-            | grep -m1 "Developer ID Application" | sed -E 's/.*"(.*)".*/\1/')
+  SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 "Developer ID Application" | sed -E 's/.*"(.*)".*/\1/')
   [ -n "$SIGN_ID" ] && echo ">> auto-detected signing identity: $SIGN_ID"
 fi
 ENT="$HERE/entitlements.plist"
 if [ -n "$SIGN_ID" ]; then
-  echo ">> codesigning with '$SIGN_ID' (hardened runtime + timestamp)..."
+  echo ">> codesigning with '$SIGN_ID' (hardened runtime)..."
   SIGN=(codesign --force --options runtime --timestamp --entitlements "$ENT" -s "$SIGN_ID")
 else
-  echo ">> codesigning ad-hoc (no SIGN_ID set => NOT distributable/notarizable)..."
+  echo ">> codesigning ad-hoc (NOT distributable)..."
   SIGN=(codesign --force -s -)
 fi
-# Sign inner Mach-O first (deep doesn't cover Resources/), then nested apps/frameworks, then the bundle.
 while IFS= read -r f; do "${SIGN[@]}" "$f" >/dev/null 2>&1; done < <(
-  find "$OUT" -type f \( -name '*.dylib' -o -path '*/Resources/x11/bin/*' -o -path '*/Contents/exe/*' \) 2>/dev/null
-)
-[ -f "$C/MacOS/x2goclient.real" ] && "${SIGN[@]}" "$C/MacOS/x2goclient.real" >/dev/null 2>&1
-"${SIGN[@]}" "$C/MacOS/x2goclient" >/dev/null 2>&1            # the launcher (carries entitlements)
+  find "$OUT" -type f \( -name '*.dylib' -o -path '*/Resources/x11/bin/*' -o -path '*/Contents/exe/*' \) 2>/dev/null)
+"${SIGN[@]}" "$C/MacOS/X2GoApp" >/dev/null 2>&1
 if [ -n "$SIGN_ID" ]; then codesign --force --deep --options runtime --timestamp --entitlements "$ENT" -s "$SIGN_ID" "$OUT" >/dev/null 2>&1
 else codesign --force --deep -s - "$OUT" >/dev/null 2>&1; fi
 
-# --- notarize + staple ---
 if [ -n "$SIGN_ID" ] && { [ -n "${NOTARY_PROFILE:-}" ] || [ -n "${AC_APPLE_ID:-}" ]; }; then
-  echo ">> notarizing (this can take a few minutes)..."
-  ZIP="$HERE/dist/x2goclient.zip"; rm -f "$ZIP"
-  ditto -c -k --keepParent "$OUT" "$ZIP"
-  if [ -n "${NOTARY_PROFILE:-}" ]; then
-    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
-  else
-    xcrun notarytool submit "$ZIP" --apple-id "$AC_APPLE_ID" --team-id "$AC_TEAM_ID" --password "$AC_PASSWORD" --wait
-  fi
-  echo ">> stapling ticket..."
-  xcrun stapler staple "$OUT" && xcrun stapler validate "$OUT"
-  rm -f "$ZIP"
-  echo ">> notarized + stapled — give $OUT to anyone."
-elif [ -n "$SIGN_ID" ]; then
-  echo ">> signed with Developer ID but NOT notarized (set NOTARY_PROFILE to notarize)."
+  echo ">> notarizing..."
+  ZIP="$HERE/dist/X2Go.zip"; rm -f "$ZIP"; ditto -c -k --keepParent "$OUT" "$ZIP"
+  if [ -n "${NOTARY_PROFILE:-}" ]; then xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  else xcrun notarytool submit "$ZIP" --apple-id "$AC_APPLE_ID" --team-id "$AC_TEAM_ID" --password "$AC_PASSWORD" --wait; fi
+  xcrun stapler staple "$OUT" && xcrun stapler validate "$OUT"; rm -f "$ZIP"
 fi
 echo ">> done: $OUT"
