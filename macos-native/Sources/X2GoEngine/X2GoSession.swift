@@ -223,6 +223,14 @@ public actor X2GoSession {
         phase = .closed
     }
 
+    /// Disconnect locally but leave the session running on the server (no
+    /// suspend/terminate) — reconnect later takes it over.
+    public func detach() async {
+        await teardownLocal()
+        await ssh.disconnect()
+        phase = .closed
+    }
+
     private func teardownLocal() async {
         if let p = nxproxy, p.isRunning { p.terminate() }
         nxproxy = nil

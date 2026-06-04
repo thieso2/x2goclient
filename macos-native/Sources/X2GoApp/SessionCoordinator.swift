@@ -22,6 +22,9 @@ final class SessionCoordinator {
 
     func isActive(_ profileID: UUID) -> Bool { connections[profileID] != nil }
     func connection(for profileID: UUID) -> ConnectionViewModel? { connections[profileID] }
+    func connection(forWindow windowID: UUID) -> ConnectionViewModel? {
+        connections.values.first { $0.windowID == windowID }
+    }
 
     /// Start a connection for a profile if one isn't already live. Idempotent:
     /// the window value is the profile id, so opening it again just brings the
@@ -40,12 +43,12 @@ final class SessionCoordinator {
         vm.connect()
     }
 
-    func close(_ profileID: UUID, terminate: Bool = false) async {
+    func close(_ profileID: UUID, mode: ConnectionViewModel.CloseMode = .suspend) async {
         guard let vm = connections[profileID] else { return }
         if clipboardOwner == profileID { clipboard.stop(); clipboardOwner = nil }
         if focusedID == profileID { focusedID = nil }
         connections[profileID] = nil
-        await vm.teardown(terminate: terminate)
+        await vm.teardown(mode)
     }
 
     func closeAll() async {

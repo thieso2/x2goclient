@@ -4,12 +4,12 @@ import SwiftUI
 /// id; on window close it suspends + removes the connection.
 struct ConnectionWindowView: View {
     let coordinator: SessionCoordinator
-    let id: UUID?
+    let id: UUID?          // the window id (vm.windowID), unique per connection
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
-            if let id, let vm = coordinator.connection(for: id) {
+            if let id, let vm = coordinator.connection(forWindow: id) {
                 // Close is handled by ConnectionWindowDelegate (asks suspend vs
                 // terminate) and by the dashboard; no onDisappear teardown here,
                 // so the chosen action isn't overridden by a default suspend.

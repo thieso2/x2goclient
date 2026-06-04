@@ -29,6 +29,8 @@ final class ConnectionViewModel: Identifiable {
     struct Stats: Equatable { var totalBytes: Int? = nil; var bytesPerSec = 0.0 }
 
     let id: UUID                 // == the profile id (one connection per profile)
+    let windowID = UUID()        // fresh per connection — the SwiftUI window value,
+                                 // so reconnecting never reuses a stale closed scene
     let title: String
     let qualityLabel: String     // e.g. "lan·q9" — the NX speed/quality in use
     var state: UIState = .connecting("starting…")
@@ -108,7 +110,7 @@ final class ConnectionViewModel: Identifiable {
                 self.displayName = disp
                 self.sessionSize = CGSize(width: x.width, height: x.height)
                 self.state = .connected
-                self.onReady?(self.id)          // now show the window
+                self.onReady?(self.windowID)          // now show the window
                 self.startStatsLoop()
             } catch {
                 self.state = .failed(error.localizedDescription)
@@ -150,7 +152,7 @@ final class ConnectionViewModel: Identifiable {
     /// the chooser and awaits the user's pick.
     func chooseSession(_ sessions: [X2GoProtocol.SessionInfo]) async -> X2GoSession.SessionChoice {
         state = .connecting("choose a session…")
-        onReady?(id)   // the chooser needs a window to show in
+        onReady?(windowID)   // the chooser needs a window to show in
         return await withCheckedContinuation { cont in
             self.choiceCont = cont
             self.pendingSessions = sessions
@@ -164,14 +166,21 @@ final class ConnectionViewModel: Identifiable {
         choiceCont = nil
     }
 
+    enum CloseMode { case suspend, terminate, keepRunning }
+
     /// Close the display BEFORE suspend/terminate (which kills Xvfb) to avoid an
-    /// XIO abort. `terminate` ends the session; otherwise it's suspended (resumable).
-    func teardown(terminate: Bool = false) async {
+    /// XIO abort. suspend = resumable; terminate = end; keepRunning = leave the
+    /// server session running and just drop the local viewer.
+    func teardown(_ mode: CloseMode = .suspend) async {
         if torn { return }
         torn = true
         statsTask?.cancel(); statsTask = nil
         x11?.close(); x11 = nil
-        if terminate { await session.terminate() } else { await session.suspend() }
+        switch mode {
+        case .suspend: await session.suspend()
+        case .terminate: await session.terminate()
+        case .keepRunning: await session.detach()
+        }
     }
 
     // MARK: - Formatting

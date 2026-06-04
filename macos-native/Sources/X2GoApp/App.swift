@@ -38,15 +38,21 @@ final class ConnectionWindowDelegate: NSObject, NSWindowDelegate {
         guard let c = AppState.shared.coordinator, c.isActive(id) else { return true }
         let alert = NSAlert()
         alert.messageText = "Disconnect this session?"
-        alert.informativeText = "Suspend keeps your apps running on the server so you can resume "
-            + "later. Terminate ends the session and closes all its apps."
-        alert.addButton(withTitle: "Suspend")
-        alert.addButton(withTitle: "Terminate")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = """
+            Suspend: keep apps running on the server, resume later (recommended).
+            Keep running: just close this window; leave the session running.
+            Terminate: end the session and close all its apps.
+            """
+        alert.addButton(withTitle: "Suspend")        // .alertFirstButtonReturn
+        alert.addButton(withTitle: "Keep Running")   // .alertSecondButtonReturn
+        alert.addButton(withTitle: "Terminate")      // .alertThirdButtonReturn
+        let cancel = alert.addButton(withTitle: "Cancel")
+        cancel.keyEquivalent = "\u{1b}"              // Esc
         switch alert.runModal() {
-        case .alertFirstButtonReturn:  Task { await c.close(id, terminate: false) }; return true
-        case .alertSecondButtonReturn: Task { await c.close(id, terminate: true) };  return true
-        default: return false
+        case .alertFirstButtonReturn:  Task { await c.close(id, mode: .suspend) };     return true
+        case .alertSecondButtonReturn: Task { await c.close(id, mode: .keepRunning) }; return true
+        case .alertThirdButtonReturn:  Task { await c.close(id, mode: .terminate) };   return true
+        default: return false   // Cancel
         }
     }
 }
