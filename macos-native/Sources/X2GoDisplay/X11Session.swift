@@ -15,14 +15,47 @@ public final class X11Session: @unchecked Sendable {
     private var running = false
     private var thread: Thread?
     private let stopped = DispatchSemaphore(value: 0)
+    /// A second X connection used only for XFIXES cursor polling (from the main
+    /// thread), so it never races the capture thread's connection.
+    private var cursorDpy: OpaquePointer?
 
     public init() {}
+
+    /// The remote pointer cursor sprite (RGBA8, premultiplied) + hotspot, with a
+    /// serial that changes when the shape changes. The framebuffer capture does
+    /// not include the cursor, so the view uses this to set the native NSCursor.
+    public struct CursorFrame: Sendable {
+        public let rgba: [UInt8]
+        public let width: Int
+        public let height: Int
+        public let xhot: Int
+        public let yhot: Int
+        public let serial: UInt
+    }
+
+    /// Fetch the current cursor sprite (call from the main thread).
+    public func currentCursor() -> CursorFrame? {
+        guard let cd = cursorDpy else { return nil }
+        var w: Int32 = 0, h: Int32 = 0, xh: Int32 = 0, yh: Int32 = 0
+        var serial: UInt = 0
+        let cap = 256 * 256 * 4
+        var buf = [UInt8](repeating: 0, count: cap)
+        let ok = buf.withUnsafeMutableBufferPointer { p in
+            cx11_cursor_fetch(cd, &w, &h, &xh, &yh, &serial, p.baseAddress, Int32(cap))
+        }
+        guard ok == 1, w > 0, h > 0 else { return nil }
+        let n = Int(w) * Int(h) * 4
+        return CursorFrame(rgba: Array(buf[0..<n]), width: Int(w), height: Int(h),
+                           xhot: Int(xh), yhot: Int(yh), serial: serial)
+    }
 
     /// Connect, locate the X2GO session window. `displayName` e.g. ":0".
     /// `windowPrefix` defaults to "X2GO-".
     public func connect(displayName: String?, windowPrefix: String = "") -> Bool {
         dpy = displayName?.withCString { cx11_open($0) } ?? cx11_open(nil)
         guard dpy != nil else { return false }
+        // Separate connection for cursor polling (main thread).
+        cursorDpy = displayName?.withCString { cx11_open($0) } ?? cx11_open(nil)
 
         // Empty prefix → capture the whole root: our private Xvfb display where
         // the entire X2Go session renders. Otherwise locate a named window.
@@ -131,6 +164,7 @@ public final class X11Session: @unchecked Sendable {
         stop()
         lock.lock()
         if dpy != nil { cx11_close(dpy); dpy = nil }
+        if cursorDpy != nil { cx11_close(cursorDpy); cursorDpy = nil }
         buffer?.deallocate(); buffer = nil
         window = 0
         lock.unlock()

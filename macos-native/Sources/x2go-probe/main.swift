@@ -138,6 +138,11 @@ do {
         let pngPath = flag("--png") ?? "/tmp/x2go-probe-capture.png"
         x.withFrame { ptr, w, h in fraction = analyzeAndWritePNG(ptr, w: w, h: h, path: pngPath) }
         let capturedW = x.width, capturedH = x.height
+        if let cur = x.currentCursor() {
+            print("cursor: \(cur.width)x\(cur.height) hotspot (\(cur.xhot),\(cur.yhot)) serial \(cur.serial)")
+        } else {
+            print("cursor: none (XFIXES unavailable?)")
+        }
         x.close()   // close our X connection BEFORE killing Xvfb (avoids XIO abort)
         print(String(format: "captured %dx%d, non-black pixels = %.1f%%  -> %@",
                      capturedW, capturedH, fraction * 100, pngPath))

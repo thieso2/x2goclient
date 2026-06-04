@@ -4,11 +4,42 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xfixes.h>
 #include <X11/keysym.h>
 #include <string.h>
 #include <stdlib.h>
 
 struct cx11_display { Display *dpy; Window target; int last_x, last_y; };
+
+/* Current pointer cursor sprite via XFIXES (the root framebuffer capture does
+ * NOT include the cursor). Fills `out` with width*height*4 RGBA (premultiplied),
+ * the hotspot, and a serial that changes when the cursor shape changes. Returns
+ * 1 on success, 0 if XFIXES is unavailable or `out` is too small. */
+int cx11_cursor_fetch(cx11_display *d, int *w, int *h, int *xhot, int *yhot,
+                      unsigned long *serial, unsigned char *out, int out_cap) {
+    if (!d || !d->dpy) return 0;
+    int ev, er;
+    if (!XFixesQueryExtension(d->dpy, &ev, &er)) return 0;
+    XFixesCursorImage *img = XFixesGetCursorImage(d->dpy);
+    if (!img) return 0;
+    int ww = img->width, hh = img->height;
+    int need = ww * hh * 4;
+    if (ww <= 0 || hh <= 0 || need > out_cap) { XFree(img); return 0; }
+    for (int i = 0; i < ww * hh; ++i) {
+        unsigned long p = img->pixels[i];   /* premultiplied ARGB in the low 32 bits */
+        out[i * 4 + 0] = (unsigned char)((p >> 16) & 0xff); /* R */
+        out[i * 4 + 1] = (unsigned char)((p >> 8) & 0xff);  /* G */
+        out[i * 4 + 2] = (unsigned char)(p & 0xff);         /* B */
+        out[i * 4 + 3] = (unsigned char)((p >> 24) & 0xff); /* A */
+    }
+    if (w) *w = ww;
+    if (h) *h = hh;
+    if (xhot) *xhot = img->xhot;
+    if (yhot) *yhot = img->yhot;
+    if (serial) *serial = img->cursor_serial;
+    XFree(img);
+    return 1;
+}
 
 cx11_display *cx11_open(const char *name) {
     Display *dpy = XOpenDisplay(name);

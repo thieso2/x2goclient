@@ -12,7 +12,7 @@ let x11Lib = "/opt/X11/lib"
 // Linker flags every executable that (transitively) uses CX11 needs.
 let x11Link: [LinkerSetting] = [
     .unsafeFlags([
-        "-L\(x11Lib)", "-lX11", "-lXext", "-lXtst",
+        "-L\(x11Lib)", "-lX11", "-lXext", "-lXtst", "-lXfixes",
         "-Xlinker", "-rpath", "-Xlinker", x11Lib,
     ])
 ]

@@ -55,6 +55,12 @@ void          cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press);
 /* Flush pending X requests. */
 void          cx11_flush(cx11_display *d);
 
+/* Current pointer cursor sprite via XFIXES (not in the framebuffer capture).
+ * Fills `out` (RGBA8, premultiplied), size, hotspot, and a change-serial.
+ * Returns 1 on success, 0 if XFIXES is unavailable or `out` is too small. */
+int           cx11_cursor_fetch(cx11_display *d, int *w, int *h, int *xhot, int *yhot,
+                                unsigned long *serial, unsigned char *out, int out_cap);
+
 /* --- clipboard bridge (its own X connection; selections are server-side) ---
  * Syncs the X CLIPBOARD selection with the macOS pasteboard. */
 typedef struct cx11_clip cx11_clip;

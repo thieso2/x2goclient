@@ -8,7 +8,10 @@ final class RemoteMetalView: NSView {
     private let renderer: MetalRenderer
     private let session: X11Session
     private var timer: Timer?
+    private var cursorTimer: Timer?
     private var tracking: NSTrackingArea?
+    private var remoteCursor: NSCursor?
+    private var lastCursorSerial: UInt = .max
 
     init(renderer: MetalRenderer, session: X11Session) {
         self.renderer = renderer
@@ -43,7 +46,12 @@ final class RemoteMetalView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        syncDrawableSize()
+        if window == nil {
+            timer?.invalidate(); timer = nil
+            cursorTimer?.invalidate(); cursorTimer = nil
+        } else {
+            syncDrawableSize()
+        }
     }
 
     override var wantsUpdateLayer: Bool { true }
@@ -56,6 +64,44 @@ final class RemoteMetalView: NSView {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+
+        // Reflect the remote pointer shape (XFIXES) as the native NSCursor.
+        let ct = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollCursor() }
+        }
+        RunLoop.main.add(ct, forMode: .common)
+        cursorTimer = ct
+    }
+
+    // MARK: - Remote cursor
+
+    private func pollCursor() {
+        guard let c = session.currentCursor(), c.serial != lastCursorSerial else { return }
+        lastCursorSerial = c.serial
+        remoteCursor = Self.makeCursor(c)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        if let rc = remoteCursor { addCursorRect(bounds, cursor: rc) }
+        else { super.resetCursorRects() }
+    }
+
+    private static func makeCursor(_ c: X11Session.CursorFrame) -> NSCursor? {
+        guard c.width > 0, c.height > 0,
+              let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: c.width, pixelsHigh: c.height,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: c.width * 4, bitsPerPixel: 32)
+        else { return nil }
+        if let dst = rep.bitmapData {
+            c.rgba.withUnsafeBytes { src in
+                if let base = src.baseAddress { memcpy(dst, base, min(c.rgba.count, c.width * c.height * 4)) }
+            }
+        }
+        let img = NSImage(size: NSSize(width: c.width, height: c.height))
+        img.addRepresentation(rep)
+        return NSCursor(image: img, hotSpot: NSPoint(x: c.xhot, y: c.yhot))
     }
 
     private func renderFrame() {
