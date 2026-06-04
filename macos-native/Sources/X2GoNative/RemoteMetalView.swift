@@ -95,20 +95,16 @@ final class RemoteMetalView: NSView {
     private func sendKey(_ e: NSEvent, press: Bool) {
         guard let ks = KeyMap.keysym(for: e) else { return }
         let mods = e.modifierFlags
-        // macOS uses ⌘ for shortcuts (copy/paste/cut/print/…); X/Linux apps use
-        // Ctrl. Map Command → Control so ⌘C/⌘V/⌘X/⌘P become Ctrl+C/V/X/P. Use
-        // ⌘⇧C for terminal copy (→ Ctrl+Shift+C). Plain Control still maps too.
-        let wantCtrl = mods.contains(.control) || mods.contains(.command)
         if press {
-            if mods.contains(.shift)  { session.key(keysym: KeyMap.shiftL, press: true) }
-            if wantCtrl               { session.key(keysym: KeyMap.controlL, press: true) }
-            if mods.contains(.option) { session.key(keysym: KeyMap.altL, press: true) }
+            if mods.contains(.shift)   { session.key(keysym: KeyMap.shiftL, press: true) }
+            if mods.contains(.control) { session.key(keysym: KeyMap.controlL, press: true) }
+            if mods.contains(.option)  { session.key(keysym: KeyMap.altL, press: true) }
             session.key(keysym: ks, press: true)
         } else {
             session.key(keysym: ks, press: false)
-            if mods.contains(.option) { session.key(keysym: KeyMap.altL, press: false) }
-            if wantCtrl               { session.key(keysym: KeyMap.controlL, press: false) }
-            if mods.contains(.shift)  { session.key(keysym: KeyMap.shiftL, press: false) }
+            if mods.contains(.option)  { session.key(keysym: KeyMap.altL, press: false) }
+            if mods.contains(.control) { session.key(keysym: KeyMap.controlL, press: false) }
+            if mods.contains(.shift)   { session.key(keysym: KeyMap.shiftL, press: false) }
         }
         session.flush()
     }
