@@ -146,7 +146,7 @@ do {
         x.close()   // close our X connection BEFORE killing Xvfb (avoids XIO abort)
         print(String(format: "captured %dx%d, non-black pixels = %.1f%%  -> %@",
                      capturedW, capturedH, fraction * 100, pngPath))
-        await session.terminate()
+        if flag("--keep") != nil { await session.suspend() } else { await session.terminate() }
         if fraction < 0.02 { print("FAIL: frame essentially black"); exit(1) }
         print("OK: live desktop streamed into the Swift engine, no XQuartz")
 

@@ -118,12 +118,17 @@ public actor X2GoSession {
         let geo = resolved.geometry.token
 
         // Decide: offer the user existing sessions to reconnect, or start new.
+        let statuses = list.map { "\($0.sessionId.prefix(20))=\($0.status)" }.joined(separator: ", ")
+        FileHandle.standardError.write(Data("X2Go: list=\(list.count) [\(statuses)] chooser=\(chooser != nil)\n".utf8))
         let choice: SessionChoice
         if let chooser, !list.isEmpty {
+            FileHandle.standardError.write(Data("X2Go: invoking chooser\n".utf8))
             choice = await chooser(list)
         } else if config.preferResume, let s = list.first(where: { $0.isSuspended }) {
+            FileHandle.standardError.write(Data("X2Go: auto-resume \(s.sessionId)\n".utf8))
             choice = .resume(s)
         } else {
+            FileHandle.standardError.write(Data("X2Go: starting NEW\n".utf8))
             choice = .new
         }
 
