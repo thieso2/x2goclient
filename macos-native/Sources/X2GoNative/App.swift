@@ -10,6 +10,7 @@ final class SessionModel {
     var state: State = .connecting
 
     let session = X11Session()
+    let clipboard = ClipboardBridge()
     var renderer: MetalRenderer?
 
     private let display: String
@@ -33,6 +34,7 @@ final class SessionModel {
             await MainActor.run {
                 if ok {
                     session.start()
+                    self.clipboard.start(display: display)   // copy/paste X ↔ macOS
                     self.state = .connected
                 } else {
                     let what = prefix.isEmpty ? "display \(display) (is Xvfb running?)" : "'\(prefix)' window on \(display)"

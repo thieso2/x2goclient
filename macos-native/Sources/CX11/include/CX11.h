@@ -55,4 +55,16 @@ void          cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press);
 /* Flush pending X requests. */
 void          cx11_flush(cx11_display *d);
 
+/* --- clipboard bridge (its own X connection; selections are server-side) ---
+ * Syncs the X CLIPBOARD selection with the macOS pasteboard. */
+typedef struct cx11_clip cx11_clip;
+cx11_clip *cx11_clip_open(const char *name);
+void       cx11_clip_close(cx11_clip *c);
+/* Own CLIPBOARD and serve this UTF-8 text to X apps that paste (mac -> X). */
+void       cx11_clip_set_text(cx11_clip *c, const char *utf8);
+/* Current X CLIPBOARD as UTF-8 (X -> mac). malloc'd; caller frees. NULL if none. */
+char      *cx11_clip_get_text(cx11_clip *c);
+/* Process incoming selection requests; call frequently. */
+void       cx11_clip_pump(cx11_clip *c, int timeout_ms);
+
 #endif /* CX11_H */
