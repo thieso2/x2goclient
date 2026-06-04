@@ -165,6 +165,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
+    // Do not restore windows/sessions from the previous run — start fresh with
+    // just the Session Manager.
+    func applicationShouldRestoreApplicationState(_ app: NSApplication, coder: NSCoder) -> Bool { false }
     // Keep the app running when a connection window closes (the manager stays).
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
 

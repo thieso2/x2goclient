@@ -32,51 +32,47 @@ struct SessionManagerView: View {
     private let columns = [GridItem(.adaptive(minimum: 260, maximum: 340), spacing: 16)]
 
     var body: some View {
-        Group {
-            if store.profiles.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(filtered) { profile in
-                            ProfileCard(
-                                profile: profile,
-                                vm: coordinator.connection(for: profile.id),
-                                selected: selection == profile.id,
-                                onEdit: { edit(profile) },
-                                onOpen: { activate(profile) },
-                                onClose: { disconnecting = profile })
-                            .onTapGesture { selection = profile.id }
-                            .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
-                            .contextMenu {
-                                Button("Connect / Show") { activate(profile) }
-                                Button("Edit…") { edit(profile) }
-                                if coordinator.isActive(profile.id) {
-                                    Button("Disconnect") { disconnecting = profile }
-                                }
-                                Divider()
-                                Button("Delete", role: .destructive) { store.delete(profile) }
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search sessions", text: $search).textFieldStyle(.plain)
+                Spacer()
+                Menu {
+                    Button("Import from old X2Go client…") { runImport() }
+                } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton).fixedSize()
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 16) {
+                    AddSessionCard { newProfile() }
+                    ForEach(filtered) { profile in
+                        ProfileCard(
+                            profile: profile,
+                            vm: coordinator.connection(for: profile.id),
+                            selected: selection == profile.id,
+                            onEdit: { edit(profile) },
+                            onOpen: { activate(profile) },
+                            onClose: { disconnecting = profile },
+                            onDelete: { deleteProfile(profile) })
+                        .onTapGesture { selection = profile.id }
+                        .simultaneousGesture(TapGesture(count: 2).onEnded { activate(profile) })
+                        .contextMenu {
+                            Button("Connect / Show") { activate(profile) }
+                            Button("Edit…") { edit(profile) }
+                            if coordinator.isActive(profile.id) {
+                                Button("Disconnect") { disconnecting = profile }
                             }
+                            Divider()
+                            Button("Delete", role: .destructive) { deleteProfile(profile) }
                         }
                     }
-                    .padding(20)
                 }
+                .padding(20)
             }
         }
         .frame(minWidth: 760, minHeight: 480)
-        .searchable(text: $search, placement: .toolbar, prompt: "Search sessions")
-        .toolbar {
-            ToolbarItemGroup {
-                Button { newProfile() } label: { Label("New", systemImage: "plus") }
-                Button { if let p = selected { store.delete(p); selection = nil } } label: {
-                    Label("Delete", systemImage: "trash")
-                }.disabled(selected == nil)
-            }
-            ToolbarItem(placement: .automatic) {
-                Menu { Button("Import from old X2Go client…") { runImport() } }
-                    label: { Label("More", systemImage: "ellipsis.circle") }
-            }
-        }
         .navigationTitle("X2Go Sessions")
         .sheet(item: $editing) { profile in
             ProfileEditor(profile: profile, isNew: isNew) { saved in
@@ -115,19 +111,9 @@ struct SessionManagerView: View {
         } message: { Text(importNote ?? "") }
     }
 
-    private var selected: SessionProfile? { store.profiles.first { $0.id == selection } }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "display").font(.system(size: 48)).foregroundStyle(.secondary)
-            Text("No sessions yet").font(.title2)
-            Text("Create a session or import from the old X2Go client.").foregroundStyle(.secondary)
-            HStack {
-                Button("New Session") { newProfile() }.buttonStyle(.borderedProminent)
-                Button("Import…") { runImport() }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func deleteProfile(_ p: SessionProfile) {
+        store.delete(p)
+        if selection == p.id { selection = nil }
     }
 
     private func newProfile() { isNew = true; editing = SessionProfile() }
@@ -155,7 +141,26 @@ struct SessionManagerView: View {
     }
 }
 
-/// A profile tile with a live status badge and edit / open / close actions.
+/// A big dashed "+" tile that creates a new session.
+struct AddSessionCard: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Image(systemName: "plus.circle.fill").font(.system(size: 40)).foregroundStyle(.tint)
+                Text("New Session").font(.headline).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity).frame(minHeight: 150)
+            .background(.background.secondary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .foregroundStyle(.tertiary))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A profile tile with a live status badge and edit / open / disconnect / delete.
 struct ProfileCard: View {
     let profile: SessionProfile
     let vm: ConnectionViewModel?
@@ -163,6 +168,7 @@ struct ProfileCard: View {
     let onEdit: () -> Void
     let onOpen: () -> Void
     let onClose: () -> Void
+    let onDelete: () -> Void
 
     private var statusColor: Color {
         guard let vm else { return .secondary.opacity(0.4) }
@@ -193,10 +199,12 @@ struct ProfileCard: View {
                 Button(action: onOpen) { Image(systemName: isActive ? "macwindow.on.rectangle" : "bolt.fill") }
                     .help(isActive ? "Bring to front" : "Connect")
                 Spacer()
-                Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
-                    .help("Disconnect")
-                    .foregroundStyle(.red)
-                    .disabled(!isActive)
+                if isActive {
+                    Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
+                        .help("Disconnect").foregroundStyle(.orange)
+                }
+                Button(action: onDelete) { Image(systemName: "trash") }
+                    .help("Delete session").foregroundStyle(.red)
             }
             .buttonStyle(.borderless)
             .imageScale(.large)

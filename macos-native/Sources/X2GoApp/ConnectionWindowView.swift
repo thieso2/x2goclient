@@ -5,6 +5,7 @@ import SwiftUI
 struct ConnectionWindowView: View {
     let coordinator: SessionCoordinator
     let id: UUID?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
@@ -14,12 +15,9 @@ struct ConnectionWindowView: View {
                 // so the chosen action isn't overridden by a default suspend.
                 ConnectionView(vm: vm)
             } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "rectangle.on.rectangle.slash").font(.largeTitle)
-                    Text("Connection closed").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
+                // No live connection (e.g. a window restored from a previous run):
+                // close it so we never show a stale, empty connection window.
+                Color.clear.onAppear { dismiss() }
             }
         }
     }
