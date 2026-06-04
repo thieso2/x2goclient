@@ -50,6 +50,19 @@ uint64_t cx11_find_window(cx11_display *d, const char *prefix) {
     return (uint64_t)find_recursive(d->dpy, root, prefix);
 }
 
+uint64_t cx11_root_window(cx11_display *d) {
+    if (!d || !d->dpy) return 0;
+    return (uint64_t)DefaultRootWindow(d->dpy);
+}
+
+int cx11_screen_size(cx11_display *d, int *w, int *h) {
+    if (!d || !d->dpy) return 0;
+    int s = DefaultScreen(d->dpy);
+    if (w) *w = DisplayWidth(d->dpy, s);
+    if (h) *h = DisplayHeight(d->dpy, s);
+    return 1;
+}
+
 int cx11_window_size(cx11_display *d, uint64_t win, int *w, int *h) {
     if (!d || !d->dpy) return 0;
     XWindowAttributes a;
@@ -110,82 +123,42 @@ int cx11_capture_bgra(cx11_display *d, uint64_t win, int w, int h, uint8_t *out)
 
 void cx11_set_target(cx11_display *d, uint64_t win) {
     if (!d) return;
-    d->target = (Window)win;
+    d->target = (Window)win;   /* retained for compat; XTEST is server-level */
 }
 
-static unsigned int pointer_state(cx11_display *d) {
-    Window r, c; int rx, ry, wx, wy; unsigned int mask = 0;
-    XQueryPointer(d->dpy, d->target ? d->target : DefaultRootWindow(d->dpy),
-                  &r, &c, &rx, &ry, &wx, &wy, &mask);
-    return mask;
-}
-
+/* XTEST injects real server-level input on the default screen. Coordinates are
+ * absolute root/screen pixels — and since we capture the whole root, the view's
+ * pixel coordinates map 1:1. This is the path a real server (Xvfb) supports and
+ * XQuartz 2.8.5 did not. */
 void cx11_motion(cx11_display *d, int x, int y) {
-    if (!d || !d->dpy || !d->target) return;
-    XWarpPointer(d->dpy, None, d->target, 0, 0, 0, 0, x, y);
+    if (!d || !d->dpy) return;
+    XTestFakeMotionEvent(d->dpy, DefaultScreen(d->dpy), x, y, CurrentTime);
     d->last_x = x; d->last_y = y;
     XFlush(d->dpy);
 }
 
-static void send_button(cx11_display *d, int button, Bool press) {
-    Window root = DefaultRootWindow(d->dpy);
-    int rx = 0, ry = 0; Window child;
-    XTranslateCoordinates(d->dpy, d->target, root, d->last_x, d->last_y, &rx, &ry, &child);
-    XButtonEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.type = press ? ButtonPress : ButtonRelease;
-    ev.display = d->dpy;
-    ev.window = d->target;
-    ev.root = root;
-    ev.subwindow = None;
-    ev.time = CurrentTime;
-    ev.x = d->last_x; ev.y = d->last_y;
-    ev.x_root = rx; ev.y_root = ry;
-    ev.state = pointer_state(d);
-    ev.button = (unsigned)button;
-    ev.same_screen = True;
-    XSendEvent(d->dpy, d->target, True,
-               press ? ButtonPressMask : ButtonReleaseMask, (XEvent *)&ev);
+void cx11_button(cx11_display *d, int button, int is_press) {
+    if (!d || !d->dpy) return;
+    XTestFakeButtonEvent(d->dpy, (unsigned)button, is_press ? True : False, CurrentTime);
     XFlush(d->dpy);
 }
 
-void cx11_button(cx11_display *d, int button, int is_press) {
-    if (!d || !d->dpy || !d->target) return;
-    send_button(d, button, is_press ? True : False);
-}
-
 void cx11_scroll(cx11_display *d, int up, int amount) {
-    if (!d || !d->dpy || !d->target) return;
+    if (!d || !d->dpy) return;
     int button = up ? 4 : 5;          /* X11 wheel = buttons 4/5 */
     if (amount < 1) amount = 1;
     for (int i = 0; i < amount; ++i) {
-        send_button(d, button, True);
-        send_button(d, button, False);
+        XTestFakeButtonEvent(d->dpy, (unsigned)button, True, CurrentTime);
+        XTestFakeButtonEvent(d->dpy, (unsigned)button, False, CurrentTime);
     }
+    XFlush(d->dpy);
 }
 
 void cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press) {
-    if (!d || !d->dpy || !d->target) return;
+    if (!d || !d->dpy) return;
     KeyCode kc = XKeysymToKeycode(d->dpy, (KeySym)keysym);
     if (kc == 0) return;
-    Window root = DefaultRootWindow(d->dpy);
-    int rx = 0, ry = 0; Window child;
-    XTranslateCoordinates(d->dpy, d->target, root, d->last_x, d->last_y, &rx, &ry, &child);
-    XKeyEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.type = is_press ? KeyPress : KeyRelease;
-    ev.display = d->dpy;
-    ev.window = d->target;
-    ev.root = root;
-    ev.subwindow = None;
-    ev.time = CurrentTime;
-    ev.x = d->last_x; ev.y = d->last_y;
-    ev.x_root = rx; ev.y_root = ry;
-    ev.state = pointer_state(d);
-    ev.keycode = kc;
-    ev.same_screen = True;
-    XSendEvent(d->dpy, d->target, True,
-               is_press ? KeyPressMask : KeyReleaseMask, (XEvent *)&ev);
+    XTestFakeKeyEvent(d->dpy, kc, is_press ? True : False, CurrentTime);
     XFlush(d->dpy);
 }
 

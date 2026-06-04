@@ -24,6 +24,12 @@ void          cx11_close(cx11_display *d);
  * Returns the window XID, or 0 if none found. */
 uint64_t      cx11_find_window(cx11_display *d, const char *prefix);
 
+/* Root window of the default screen (the whole Xvfb display surface). */
+uint64_t      cx11_root_window(cx11_display *d);
+
+/* Default screen size in pixels. Returns 1 on success. */
+int           cx11_screen_size(cx11_display *d, int *w, int *h);
+
 /* Window size in pixels. Returns 1 on success. */
 int           cx11_window_size(cx11_display *d, uint64_t win, int *w, int *h);
 
@@ -34,11 +40,11 @@ int           cx11_window_root_origin(cx11_display *d, uint64_t win, int *rx, in
  * Returns 1 on success, 0 on failure (e.g. window unmapped/obscured). */
 int           cx11_capture_bgra(cx11_display *d, uint64_t win, int w, int h, uint8_t *out);
 
-/* --- input injection ---
- * XQuartz does not provide XTEST, so we drive the session window directly:
- * real pointer motion via XWarpPointer, and synthetic button/key events via
- * XSendEvent to the (single) X2GO window, which nxproxy forwards to the agent.
- * Coordinates are window-relative pixels. Call cx11_set_target() first. */
+/* --- input injection (XTEST) ---
+ * Against a real server (Xvfb) we use XTEST to synthesize genuine server-level
+ * input. Coordinates are root/screen pixels (we capture the whole root, so view
+ * pixels map 1:1). cx11_set_target() is retained for compatibility (no-op for
+ * XTEST). */
 void          cx11_set_target(cx11_display *d, uint64_t win);
 void          cx11_motion(cx11_display *d, int x, int y);
 void          cx11_button(cx11_display *d, int button, int is_press);

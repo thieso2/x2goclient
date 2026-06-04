@@ -35,7 +35,8 @@ final class SessionModel {
                     session.start()
                     self.state = .connected
                 } else {
-                    self.state = .failed("No '\(prefix)' window found on display \(display).\nStart an X2Go session first.")
+                    let what = prefix.isEmpty ? "display \(display) (is Xvfb running?)" : "'\(prefix)' window on \(display)"
+                    self.state = .failed("Could not connect to \(what).\nStart Xvfb and the X2Go session first.")
                 }
             }
         }
@@ -94,9 +95,10 @@ struct X2GoNativeApp: App {
     @State private var model: SessionModel
 
     init() {
-        // CLI args: --display :0 --prefix X2GO-
-        var display = ProcessInfo.processInfo.environment["DISPLAY"] ?? ":0"
-        var prefix = "X2GO-"
+        // CLI args: --display :99 [--prefix X2GO-]. Default prefix is empty:
+        // capture the whole root of our private Xvfb display.
+        var display = ProcessInfo.processInfo.environment["DISPLAY"] ?? ":99"
+        var prefix = ""
         let args = CommandLine.arguments
         for i in 0..<args.count {
             if args[i] == "--display", i + 1 < args.count { display = args[i + 1] }

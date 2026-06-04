@@ -17,9 +17,28 @@ final class X11Session: @unchecked Sendable {
 
     /// Connect, locate the X2GO session window. `displayName` e.g. ":0".
     /// `windowPrefix` defaults to "X2GO-".
-    func connect(displayName: String?, windowPrefix: String = "X2GO-") -> Bool {
+    func connect(displayName: String?, windowPrefix: String = "") -> Bool {
         dpy = displayName?.withCString { cx11_open($0) } ?? cx11_open(nil)
         guard dpy != nil else { return false }
+
+        // Empty prefix → capture the whole root: our private Xvfb display where
+        // the entire X2Go session renders. Otherwise locate a named window.
+        if windowPrefix.isEmpty {
+            // Poll until the screen is up and has been drawn into.
+            for _ in 0..<60 {
+                let root = cx11_root_window(dpy)
+                var ww: Int32 = 0, hh: Int32 = 0
+                if root != 0, cx11_screen_size(dpy, &ww, &hh) == 1, ww > 0, hh > 0 {
+                    window = root; width = Int(ww); height = Int(hh)
+                    cx11_set_target(dpy, root)
+                    buffer = .allocate(capacity: width * height * 4)
+                    buffer?.initialize(repeating: 0, count: width * height * 4)
+                    return true
+                }
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+            return false
+        }
 
         // The session window may take a moment after launch; poll briefly.
         for _ in 0..<40 {
