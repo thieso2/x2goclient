@@ -1153,9 +1153,44 @@ private slots:
 #ifdef Q_OS_DARWIN
     void slotSetModMap();
     void handle_xmodmap_error (QProcess &proc);
+    // Native macOS display: the viewer (X2GoNative) process exited.
+    void slotViewerFinished ( int result, QProcess::ExitStatus st );
 private:
     QTimer* modMapTimer;
     QString kbMap;
+
+    // Native macOS display path (no XQuartz): each connection owns a private
+    // headless Xvfb (the "session display") and a native Metal viewer that
+    // presents it. Single concurrent connection today; this becomes a
+    // QMap<sessionId, SessionDisplay> when multi-session lands. See
+    // macos-native/docs/adr/0001-per-session-xvfb-and-viewer.md.
+    struct SessionDisplay {
+        int       displayNum = -1;       // :N
+        QString   dispStr;               // ":N"
+        QString   geometry;              // "WxH" (Xvfb root == nxagent geometry)
+        bool      wantFullscreen = false;// profile asked for fullscreen
+        QProcess *xvfb   = nullptr;
+        QProcess *viewer = nullptr;
+        int       viewerRetries = 0;     // crash-relaunch budget
+        bool      tearingDown = false;   // guard against the close->suspend loop
+    };
+    SessionDisplay sessionDisplay_;
+
+    // Resolve the profile's display setting to a concrete pixel geometry.
+    // fullscreen -> main screen logical points (and *wantFullscreen=true);
+    // otherwise the given width/height verbatim (maxdim is already folded into
+    // them by the caller). Returns "WxH".
+    QString resolveSessionGeometry ( bool fullscreen, int width, int height,
+                                     bool *wantFullscreen );
+    // Start the per-session Xvfb at geom ("WxH"); sets sessionDisplay_ and the
+    // process DISPLAY. Returns false on failure.
+    bool startSessionDisplay ( const QString &geom, bool wantFullscreen );
+    // Spawn the native viewer for sessionDisplay_.
+    void launchViewer ();
+    // Kill viewer (signal disconnected first) then Xvfb; clear sessionDisplay_.
+    void teardownSessionDisplay ();
+    // Locate the Xvfb binary: bundle Resources first, then /opt/X11.
+    QString findXvfbBinary ( QString *fontPath, QString *xkbPath );
 #endif
 
 private:

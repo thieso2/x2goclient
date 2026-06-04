@@ -46,8 +46,8 @@ final class MetalRenderer {
         }
 
         let sd = MTLSamplerDescriptor()
-        sd.minFilter = .linear
-        sd.magFilter = .linear
+        sd.minFilter = .linear    // smooth when the desktop is downscaled (fit)
+        sd.magFilter = .nearest   // crisp pixels when zoomed in past 1:1
         guard let s = device.makeSamplerState(descriptor: sd) else { return nil }
         self.sampler = s
     }

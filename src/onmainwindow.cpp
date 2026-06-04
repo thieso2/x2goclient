@@ -19,6 +19,9 @@
 #include <QRegExp>
 #include <algorithm>
 #include "help.h"
+#ifdef Q_OS_DARWIN
+#include <QThread>
+#endif
 
 void x2goSession::operator = ( const x2goSession& s )
 {
@@ -3173,8 +3176,10 @@ void ONMainWindow::continueNormalSession()
     // x2golistsessions command below races at the libssh layer and one of the two
     // gets dropped. The timer still runs long before the session command launches
     // the desktop.
-    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
-        QTimer::singleShot ( 0, this, SLOT ( slotDisableServerCompositing() ) );
+#ifdef Q_OS_DARWIN
+    // Native macOS capture path always needs the server-side compositor off.
+    QTimer::singleShot ( 0, this, SLOT ( slotDisableServerCompositing() ) );
+#endif
 
     if ( !shadowSession )
         sshConnection->executeCommand ( "export HOSTNAME && x2golistsessions", this,SLOT ( slotListSessions ( bool, QString,int )));
@@ -4003,13 +4008,22 @@ void ONMainWindow::startNewSession()
     if (defaultLayout.size()>0)
         layout=cbLayout->currentText();
 
-    // Native macOS (Xvfb + Metal) path: the bundled Xvfb owns the display and the
-    // Metal window presents its whole root. Force the session to fullscreen so its
-    // geometry always equals the Xvfb root size. Any explicit width/height that
-    // differs from the Xvfb size corrupts the nxproxy replay (overlapping
-    // window/panel "trails"). Set by macos-native/launcher.c.
-    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
-        fullscreen=true;
+#ifdef Q_OS_DARWIN
+    // Native macOS: resolve to a concrete WxH (fullscreen/maxdim -> screen
+    // points) so the per-session Xvfb root and the nxagent geometry match.
+    // The session is never "fullscreen" here -- the viewer handles fullscreen
+    // presentation (sessionDisplay_.wantFullscreen). See ADR 0001.
+    {
+        bool wantFs = false;
+        QString g = resolveSessionGeometry ( fullscreen, width, height, &wantFs );
+        QStringList wh = g.split ( "x" );
+        width  = wh.value ( 0 ).toInt ();
+        height = wh.value ( 1 ).toInt ();
+        fullscreen = false;
+        sessionDisplay_.geometry       = g;
+        sessionDisplay_.wantFullscreen = wantFs;
+    }
+#endif
 
     QString geometry;
     if ( fullscreen )
@@ -4277,10 +4291,20 @@ void ONMainWindow::resumeSession ( const x2goSession& s )
     if (defaultLayout.size()>0)
         layout=cbLayout->currentText();
 
-    // Native macOS (Xvfb + Metal) path: force fullscreen so the session geometry
-    // always matches the bundled Xvfb root size (see comment above / launcher.c).
-    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
-        fullscreen=true;
+#ifdef Q_OS_DARWIN
+    // Native macOS: resolve to a concrete WxH so the per-session Xvfb root and
+    // the nxagent geometry match; the viewer handles fullscreen presentation.
+    {
+        bool wantFs = false;
+        QString g = resolveSessionGeometry ( fullscreen, width, height, &wantFs );
+        QStringList wh = g.split ( "x" );
+        width  = wh.value ( 0 ).toInt ();
+        height = wh.value ( 1 ).toInt ();
+        fullscreen = false;
+        sessionDisplay_.geometry       = g;
+        sessionDisplay_.wantFullscreen = wantFs;
+    }
+#endif
 
     QString geometry;
 #ifdef Q_OS_WIN
@@ -5484,6 +5508,17 @@ void ONMainWindow::slotTunnelOk(int)
     env << "LD_LIBRARY_PATH="+x2golibpath;
     env << "NX_CLIENT="+QCoreApplication::applicationFilePath ();
 
+#ifdef Q_OS_DARWIN
+    // Native macOS: start this connection's private Xvfb (sized to the geometry
+    // resolved in startNewSession/resumeSession) before nxproxy connects to it.
+    if ( !startSessionDisplay ( sessionDisplay_.geometry,
+                                sessionDisplay_.wantFullscreen ) )
+    {
+        slotProxyError ( QProcess::FailedToStart );
+        return;
+    }
+#endif
+
 #if defined ( Q_OS_WIN ) || defined ( Q_OS_DARWIN )
     // On Mac OS X, we want to make sure that DISPLAY is set to a proper value,
     // but at the same time don't want to set the value ourselves but keep
@@ -5524,32 +5559,12 @@ void ONMainWindow::slotTunnelOk(int)
         tmpDir.cd ("../exe");
         env.append ("NX_SYSTEM=" + tmpDir.absolutePath ());
     }
-    // Point nxproxy at XQuartz's real X11 auth cookie. XQuartz (started via
-    // 'open') keeps its MIT-MAGIC-COOKIE-1 in ~/.serverauth.<pid> and does not
-    // export XAUTHORITY to our process, so nxproxy would otherwise generate a
-    // fake cookie and be rejected with 'Invalid MIT-MAGIC-COOKIE-1 key'. This
-    // is timing-immune (unlike disabling access control, which XQuartz may
-    // reset during a cold start).
-    {
-        QDir authDir (QDir::homePath ());
-        authDir.setNameFilters (QStringList () << ".serverauth.*");
-        authDir.setFilter (QDir::Files | QDir::Hidden);
-        authDir.setSorting (QDir::Time);
-        QStringList authFiles = authDir.entryList ();
-        if (!authFiles.isEmpty ())
-        {
-            QString authPath = QDir::homePath () + "/" + authFiles.first ();
-            env.append ("XAUTHORITY=" + authPath);
-            x2goDebug << "Using XQuartz XAUTHORITY: " << authPath;
-        }
-    }
+    // nxproxy renders into our private, access-control-disabled Xvfb (-ac), so no
+    // XAUTHORITY cookie is needed. Force DISPLAY to this session's display.
     if (dispInd == -1)
-    {
-
-        x2goDebug<< "No DISPLAY variable found in global environment, using autodetected setting.";
-
         env.append ("DISPLAY=" + disp);
-    }
+    else
+        env[dispInd] = "DISPLAY=" + disp;
 #endif
     nxproxy->setEnvironment ( env );
 
@@ -5576,6 +5591,12 @@ void ONMainWindow::slotTunnelOk(int)
 
     nxproxy->startCommand ( proxyCmd );
     proxyRunning=true;
+#ifdef Q_OS_DARWIN
+    // Native macOS: open the viewer on this session's Xvfb as soon as it is up;
+    // its connecting splash covers the brief empty-root moment while nxproxy
+    // streams the desktop.
+    launchViewer ();
+#endif
 // always search for proxy window on linux. On Windows only in window mode
 #ifdef Q_OS_WIN
     if (xorgMode==WIN) {
@@ -5835,6 +5856,10 @@ void ONMainWindow::slotProxyFinished ( int,QProcess::ExitStatus )
       modMapTimer = 0;
     }
     kbMap = QString ();
+    // Native macOS: the session ended (suspend/terminate/crash) -> kill this
+    // connection's viewer and Xvfb. Disconnects the viewer's finished signal
+    // first so its exit doesn't loop back into a suspend.
+    teardownSessionDisplay ();
 //fixes bug, when mainwindow inputs not accepting focus under mac
     setFocus ();
 #endif
@@ -9065,135 +9090,261 @@ bool ONMainWindow::checkAgentProcess()
 }
 
 #if defined ( Q_OS_DARWIN )
+
+// ---- Native macOS display (per-session Xvfb + Metal viewer) ----------------
+// The Qt client owns each connection's headless Xvfb and its native viewer.
+// No XQuartz. See macos-native/docs/adr/0001-per-session-xvfb-and-viewer.md
+// and 0002-remove-xquartz-path.md.
+
+// Map the current macOS keyboard layout to an XKB layout code (ported from the
+// old launcher.c, which set this globally before the Qt client ran). nxagent
+// copies the Xvfb keymap at session start, so it must match before connecting.
+static QString macXkbLayout ()
+{
+    QProcess pr;
+    pr.start ( "defaults", QStringList ()
+               << "read"
+               << QDir::homePath () + "/Library/Preferences/com.apple.HIToolbox.plist"
+               << "AppleCurrentKeyboardLayoutInputSourceID" );
+    pr.waitForFinished ( 3000 );
+    QString s = QString::fromUtf8 ( pr.readAllStandardOutput () );
+    if ( s.contains ( "German" ) )     return "de";
+    if ( s.contains ( "Swiss" ) )      return "ch";
+    if ( s.contains ( "British" ) )    return "gb";
+    if ( s.contains ( "French" ) )     return "fr";
+    if ( s.contains ( "Spanish" ) )    return "es";
+    if ( s.contains ( "Italian" ) )    return "it";
+    if ( s.contains ( "Portuguese" ) ) return "pt";
+    if ( s.contains ( "Dutch" ) )      return "nl";
+    if ( s.contains ( "Norwegian" ) )  return "no";
+    if ( s.contains ( "Swedish" ) )    return "se";
+    if ( s.contains ( "Danish" ) )     return "dk";
+    if ( s.contains ( "Finnish" ) )    return "fi";
+    return "us";
+}
+
+QString ONMainWindow::resolveSessionGeometry ( bool fullscreen, int width,
+                                               int height, bool *wantFullscreen )
+{
+    if ( wantFullscreen )
+        *wantFullscreen = fullscreen;
+    if ( fullscreen )
+    {
+        // fullscreen/maxdim -> the main screen's logical point size (what the old
+        // launcher.c computed via CGDisplayPixelsWide/High). The viewer presents
+        // 1:1 points and goes true-fullscreen for fullscreen profiles.
+        QRect g = x2go::desktop ()->screenGeometry ();
+        width  = g.width ();
+        height = g.height ();
+    }
+    if ( width  < 320 || width  > 8192 ) width  = 1280;
+    if ( height < 240 || height > 8192 ) height = 800;
+    return QString::number ( width ) + "x" + QString::number ( height );
+}
+
+QString ONMainWindow::findXvfbBinary ( QString *fontPath, QString *xkbPath )
+{
+    // Bundle first: .../Contents/Resources/x11/{bin/Xvfb,fonts/misc,xkb}.
+    QDir res ( appDir );        // .../Contents/MacOS
+    res.cdUp ();                // .../Contents
+    QString base = res.absolutePath () + "/Resources/x11";
+    QString bundleXvfb = base + "/bin/Xvfb";
+    if ( QFile::exists ( bundleXvfb ) )
+    {
+        if ( fontPath ) *fontPath = base + "/fonts/misc";
+        if ( xkbPath )  *xkbPath  = base + "/xkb";
+        return bundleXvfb;
+    }
+    // Dev fallback: XQuartz's Xvfb (raw cmake build, no bundle) with the
+    // server's own font/xkb data.
+    if ( fontPath ) *fontPath = QString ();
+    if ( xkbPath )  *xkbPath  = QString ();
+    if ( QFile::exists ( "/opt/X11/bin/Xvfb" ) )
+        return "/opt/X11/bin/Xvfb";
+    return QString ();
+}
+
+bool ONMainWindow::startSessionDisplay ( const QString &geom, bool wantFullscreen )
+{
+    // One concurrent connection today: replace any previous display.
+    if ( sessionDisplay_.xvfb || sessionDisplay_.viewer )
+        teardownSessionDisplay ();
+
+    QString fontPath, xkbPath;
+    QString xvfbBin = findXvfbBinary ( &fontPath, &xkbPath );
+    if ( xvfbBin.isEmpty () )
+    {
+        QMessageBox::critical ( this, QString (),
+            tr ( "Could not find the Xvfb display server (bundled or /opt/X11)." ) );
+        return false;
+    }
+
+    // Pick a free display by scanning the X lock/socket files.
+    int disp = 99;
+    for ( ; disp < 120; ++disp )
+    {
+        if ( !QFile::exists ( QString ( "/tmp/.X%1-lock" ).arg ( disp ) ) &&
+             !QFile::exists ( QString ( "/tmp/.X11-unix/X%1" ).arg ( disp ) ) )
+            break;
+    }
+    QString dispStr = ":" + QString::number ( disp );
+
+    QStringList args;
+    args << dispStr << "-screen" << "0" << ( geom + "x24" )
+         << "-ac" << "-noreset";
+    if ( !fontPath.isEmpty () ) args << "-fp"     << fontPath;
+    if ( !xkbPath.isEmpty () )  args << "-xkbdir" << xkbPath;
+
+    QProcess *xvfb = new QProcess ( this );
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment ();
+    if ( !xkbPath.isEmpty () )
+        env.insert ( "XKB_BINDIR", QFileInfo ( xvfbBin ).absolutePath () );
+    xvfb->setProcessEnvironment ( env );
+    xvfb->start ( xvfbBin, args );
+    if ( !xvfb->waitForStarted ( 5000 ) )
+    {
+        x2goDebug << "Xvfb failed to start: " << xvfbBin << args;
+        delete xvfb;
+        return false;
+    }
+
+    // Wait (up to ~5s) for the X socket to appear before nxproxy connects.
+    QString sock = QString ( "/tmp/.X11-unix/X%1" ).arg ( disp );
+    for ( int i = 0; i < 50 && !QFile::exists ( sock ); ++i )
+        QThread::msleep ( 100 );
+
+    sessionDisplay_.displayNum     = disp;
+    sessionDisplay_.dispStr        = dispStr;
+    sessionDisplay_.geometry       = geom;
+    sessionDisplay_.wantFullscreen = wantFullscreen;
+    sessionDisplay_.xvfb           = xvfb;
+    sessionDisplay_.viewerRetries  = 0;
+    sessionDisplay_.tearingDown    = false;
+
+    // Match the X keyboard layout to macOS before the session connects.
+    QString setxkb = QFileInfo ( xvfbBin ).absolutePath () + "/setxkbmap";
+    if ( !QFile::exists ( setxkb ) ) setxkb = "/opt/X11/bin/setxkbmap";
+    if ( QFile::exists ( setxkb ) )
+    {
+        QProcess sx;
+        QProcessEnvironment sxenv = QProcessEnvironment::systemEnvironment ();
+        sxenv.insert ( "DISPLAY", dispStr );
+        sx.setProcessEnvironment ( sxenv );
+        sx.start ( setxkb, QStringList () << macXkbLayout () );
+        sx.waitForFinished ( 3000 );
+    }
+
+    x2goDebug << "Started session display " << dispStr << " (" << geom << ")";
+    return true;
+}
+
+void ONMainWindow::launchViewer ()
+{
+    if ( sessionDisplay_.dispStr.isEmpty () )
+        return;
+    QDir dir ( appDir );        // .../Contents/MacOS
+    dir.cdUp ();                // .../Contents
+    QString viewerBin = dir.absolutePath () + "/exe/X2GoNative";
+    if ( !QFile::exists ( viewerBin ) )
+    {
+        x2goDebug << "Viewer binary not found: " << viewerBin;
+        return;
+    }
+    QStringList args;
+    args << "--display"  << sessionDisplay_.dispStr
+         << "--geometry" << sessionDisplay_.geometry;
+    if ( resumingSession.sessionId != QString () )
+        args << "--title" << resumingSession.sessionId;
+    if ( sessionDisplay_.wantFullscreen )
+        args << "--fullscreen";
+
+    QProcess *viewer = new QProcess ( this );
+    connect ( viewer, SIGNAL ( finished ( int, QProcess::ExitStatus ) ),
+              this, SLOT ( slotViewerFinished ( int, QProcess::ExitStatus ) ) );
+    viewer->start ( viewerBin, args );
+    sessionDisplay_.viewer = viewer;
+    x2goDebug << "Launched viewer for " << sessionDisplay_.dispStr;
+}
+
+void ONMainWindow::slotViewerFinished ( int result, QProcess::ExitStatus st )
+{
+    // We initiated the teardown -- ignore (closes the close->suspend loop).
+    if ( sessionDisplay_.tearingDown )
+        return;
+
+    bool crashed = ( st == QProcess::CrashExit ) || ( result != 0 );
+    if ( crashed && proxyRunning && sessionDisplay_.viewerRetries < 3 )
+    {
+        // Session + Xvfb are still up; just bring the window back.
+        ++sessionDisplay_.viewerRetries;
+        x2goDebug << "Viewer exited unexpectedly; relaunching ("
+                  << sessionDisplay_.viewerRetries << "/3).";
+        if ( sessionDisplay_.viewer )
+        {
+            sessionDisplay_.viewer->deleteLater ();
+            sessionDisplay_.viewer = nullptr;
+        }
+        launchViewer ();
+        return;
+    }
+
+    // Clean close (or out of retries): suspend. Suspending ends nxproxy ->
+    // slotProxyFinished -> teardownSessionDisplay.
+    x2goDebug << "Viewer closed; suspending session.";
+    if ( sessionDisplay_.viewer )
+    {
+        sessionDisplay_.viewer->deleteLater ();
+        sessionDisplay_.viewer = nullptr;
+    }
+    if ( proxyRunning && resumingSession.sessionId != QString () && sshConnection )
+        suspendSession ( resumingSession.sessionId );
+}
+
+void ONMainWindow::teardownSessionDisplay ()
+{
+    sessionDisplay_.tearingDown = true;
+    if ( sessionDisplay_.viewer )
+    {
+        disconnect ( sessionDisplay_.viewer,
+                     SIGNAL ( finished ( int, QProcess::ExitStatus ) ),
+                     this, SLOT ( slotViewerFinished ( int, QProcess::ExitStatus ) ) );
+        if ( sessionDisplay_.viewer->state () != QProcess::NotRunning )
+        {
+            sessionDisplay_.viewer->terminate ();
+            if ( !sessionDisplay_.viewer->waitForFinished ( 2000 ) )
+                sessionDisplay_.viewer->kill ();
+        }
+        sessionDisplay_.viewer->deleteLater ();
+        sessionDisplay_.viewer = nullptr;
+    }
+    if ( sessionDisplay_.xvfb )
+    {
+        if ( sessionDisplay_.xvfb->state () != QProcess::NotRunning )
+        {
+            sessionDisplay_.xvfb->terminate ();
+            if ( !sessionDisplay_.xvfb->waitForFinished ( 2000 ) )
+                sessionDisplay_.xvfb->kill ();
+        }
+        sessionDisplay_.xvfb->deleteLater ();
+        sessionDisplay_.xvfb = nullptr;
+    }
+    if ( sessionDisplay_.displayNum >= 0 )
+    {
+        QFile::remove ( QString ( "/tmp/.X%1-lock" ).arg ( sessionDisplay_.displayNum ) );
+        QFile::remove ( QString ( "/tmp/.X11-unix/X%1" ).arg ( sessionDisplay_.displayNum ) );
+    }
+    sessionDisplay_.displayNum    = -1;
+    sessionDisplay_.dispStr       = QString ();
+    sessionDisplay_.viewerRetries = 0;
+}
+
 QString ONMainWindow::getXDisplay()
 {
-    QLocalSocket unixSocket (this);
-    QString xsocket (getenv ("DISPLAY"));
-
-    if (xsocket.isEmpty ())
-    {
-        // A macOS app launched from Finder / LaunchServices inherits no DISPLAY,
-        // and modern XQuartz is started on demand via launchd on display :0.
-        // Launch XQuartz (by the configured path if set, otherwise by name) and
-        // wait for its well-known :0 socket to appear, then use it.
-
-        x2goDebug<< "No DISPLAY set; launching XQuartz and waiting for display :0.";
-
-        QString xdir = ConfigDialog::getXDarwinDirectory ();
-        bool started = false;
-        if (!xdir.isEmpty () && QFile::exists (xdir))
-            started = QProcess::startDetached ("/usr/bin/open", QStringList () << xdir);
-        else
-            started = QProcess::startDetached ("/usr/bin/open", QStringList () << "-a" << "XQuartz");
-
-        if (!started)
-            x2goDebug<< "Could not launch XQuartz via 'open'.";
-
-        // Wait (up to ~20s) for XQuartz to create /tmp/.X11-unix/X0.
-        const QString x0 ("/tmp/.X11-unix/X0");
-        for (int i = 0; (i < 20) && (!QFileInfo::exists (x0)); ++i)
-        {
-            int sleeptime = 1;
-            while ((sleeptime = sleep (sleeptime))) {};
-        }
-
-        if (QFileInfo::exists (x0))
-        {
-            xsocket = ":0";
-            qputenv ("DISPLAY", ":0");
-
-            x2goDebug<< "XQuartz display :0 is up.";
-
-            // Allow local (UNIX-socket) clients to connect. XQuartz started via
-            // 'open' keeps its auth cookie in ~/.serverauth.<pid>, which nxproxy
-            // cannot read -- without this it would be rejected with an
-            // 'Invalid MIT-MAGIC-COOKIE-1 key' error and the session would die.
-            QProcess xhost;
-            QProcessEnvironment xenv = QProcessEnvironment::systemEnvironment ();
-            xenv.insert ("DISPLAY", ":0");
-            xenv.insert ("PATH", xenv.value ("PATH") + ":/opt/X11/bin:/usr/X11/bin");
-            xhost.setProcessEnvironment (xenv);
-            // 'xhost +' (no host) disables access control entirely, so the
-            // server accepts nxproxy's fake cookie. '+local:' is not enough --
-            // an invalid cookie is rejected before host-based rules apply.
-            // XQuartz runs with -nolisten tcp, so this stays local-only.
-            // NB: use an absolute path -- QProcess resolves the program against
-            // the parent app's PATH (minimal under LaunchServices), not the
-            // child environment's PATH set above.
-            QString xhost_bin ("/opt/X11/bin/xhost");
-            if (!QFile::exists (xhost_bin))
-                xhost_bin = "/usr/X11/bin/xhost";
-            xhost.start (xhost_bin, QStringList () << "+");
-            xhost.waitForFinished (5000);
-
-            x2goDebug<< "xhost + -> " << xhost.readAllStandardOutput ();
-        }
-    }
-
-    // OS X >= 10.5 starts the X11 server automatically, as soon as the
-    // launchd UNIX socket is accessed.
-    // On user login, the DISPLAY environment variable is set to this said existing
-    // socket.
-    // By now, we should have a socket, even on 10.4. Test, if connecting works.
-    // Note: common sense may tell you to change this if into an else. Don't.
-    // We do not want to skip this part, if coming from the compat section above.
-    if (!(xsocket.isEmpty ()))
-    {
-        if (xsocket[0] == ':')
-        {
-            // Be backwards compatible with 10.4.
-            // Delete the ":" character.
-            xsocket.remove (0, 1);
-            // xsocket may now contain the display value (one integer),
-            // or something like "0.0" - we're only interested in the
-            // display value, so keep the first char only.
-            if (xsocket.indexOf (".") != -1)
-            {
-                xsocket = xsocket.left (xsocket.indexOf ("."));
-            }
-            // Prepend the well-known socket path.
-            xsocket.prepend ("/tmp/.X11-unix/X");
-
-            x2goDebug<< "xsocket in compat mode: " << xsocket;
-
-        }
-
-        unixSocket.connectToServer (xsocket);
-
-        if (unixSocket.waitForConnected (10000))
-        {
-            unixSocket.disconnectFromServer ();
-
-            // Mac OS X 10.4 compat: nxproxy expects
-            // a DISPLAY variable like ":0", passing
-            // an UNIX socket will just make it error out.
-            // Instead of altering the nxproxy code, which does
-            // already try to connect to "/tmp/.X11-unix/Xi" with
-            // i = display number, pass ":i" as DISPLAY.
-            if (xsocket.left (16).compare ("/tmp/.x11-unix/x", Qt::CaseInsensitive) == 0)
-            {
-                bool ok = FALSE;
-                int tmp = -1;
-
-                xsocket = xsocket.mid (16);
-                tmp = xsocket.toInt (&ok);
-
-                if (ok)
-                {
-                    x2goDebug<<"Returning " << QString (":") + xsocket;
-                    return (QString (":") + xsocket);
-                }
-            }
-            else
-            {
-                return (xsocket);
-            }
-        }
-    }
-    // And if not, error out.
-    show_XQuartz_start_error ();
-    slotConfig();
-    return QString();
+    // Native macOS: nxproxy renders into our per-session Xvfb, created by
+    // startSessionDisplay() before this is called. No XQuartz (ADR 0002).
+    if ( sessionDisplay_.dispStr.isEmpty () )
+        x2goDebug << "getXDisplay: no session display has been started.";
+    return sessionDisplay_.dispStr;
 }
 #endif
 

@@ -1,4 +1,14 @@
 #!/bin/bash
+# DEPRECATED dev harness. The shipped app now self-manages everything:
+# x2goclient starts a per-session Xvfb sized to the session geometry, launches
+# the X2GoNative viewer for it, and tears both down with the session (see
+# docs/adr/0001, 0002 + IMPLEMENTATION-viewer-lifecycle.md). To run the real
+# flow just launch the bundle:
+#   dist/x2goclient.app/Contents/MacOS/x2goclient \
+#     --session-conf="$HOME/x2go-test-sessions" --session=tubu \
+#     --add-to-known-hosts --autologin
+# This script remains only as a manual Xvfb+capture sandbox for the OLD flow.
+#
 # Native X2Go client via embedded Xvfb (real, complete X server) + Metal.
 #   Xvfb :99  <-- x2goclient/nxproxy renders the session here
 #   X2GoNative captures Xvfb's root into a Metal window and injects input (XTEST)

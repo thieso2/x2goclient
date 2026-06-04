@@ -26,6 +26,25 @@ final class RemoteMetalView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    /// Keep the Metal drawable matched to the (possibly scaled) view size in
+    /// backing pixels, so the GPU samples the session texture at output res.
+    private func syncDrawableSize() {
+        guard let ml = layer as? CAMetalLayer else { return }
+        let s = window?.backingScaleFactor ?? 2.0
+        let px = CGSize(width: max(1, bounds.width * s), height: max(1, bounds.height * s))
+        if ml.drawableSize != px { ml.drawableSize = px }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncDrawableSize()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncDrawableSize()
+    }
+
     override var wantsUpdateLayer: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

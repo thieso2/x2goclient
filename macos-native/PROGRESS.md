@@ -409,6 +409,44 @@ before each run.
   incremental damage updates instead of full-frame recomposite; some apps
   (Thunar) open in daemon mode without a browser window (server-side behaviour).
 
+## Milestone: per-session Xvfb + viewer lifecycle (x2goclient-owned)
+
+Reworked the viewer↔client interaction (design captured by a grilling session in
+`CONTEXT.md` + `docs/adr/0001-per-session-xvfb-and-viewer.md`,
+`docs/adr/0002-remove-xquartz-path.md`; build plan in
+`IMPLEMENTATION-viewer-lifecycle.md`).
+
+- **launcher.c gutted** to a pass-through `execv(x2goclient.real)`. The Qt client
+  now owns the display path.
+- **x2goclient starts a per-session Xvfb** sized to the resolved session geometry
+  (`fullscreen`/`maxdim` → main-screen logical points; explicit `WxH` verbatim),
+  points that session's nxproxy at it, and **launches the viewer**
+  (`X2GoNative --display :N --geometry WxH [--fullscreen] [--title …]`).
+- **XQuartz removed**: `getXDisplay()` returns the private `:N`; XQuartz
+  launch/`xhost`/serverauth deleted. Xvfb resolved bundle-first then `/opt/X11`.
+  `X2GO_FORCE_FULLSCREEN` retired; compositing-disable is unconditional on Darwin.
+- **Bidirectional lifecycle** (`SessionDisplay` unit, encapsulated for future
+  multi-session): clean viewer close → suspend; viewer crash (session up) →
+  relaunch (≤3); session stop (suspend/terminate/crash via `slotProxyFinished`)
+  → kill viewer + Xvfb, with the viewer's `finished` signal disconnected first to
+  break the close→suspend loop.
+- **Viewer (Swift)**: freely-resizable window in an `NSScrollView`; sticky **Fit**
+  by default (auto-refit on resize, never upscales), manual zoom with autohiding
+  scrollbars; **View menu** (Zoom In ⌘=, Out ⌘−, Actual Size ⌘0, Fit ⇧⌘F);
+  true macOS fullscreen for fullscreen profiles; nearest-on-magnify / linear-on-
+  minify sampling; input mapped through scale+scroll (frame-fraction → Xvfb px).
+
+**Verified (non-visual, against 10.248.1.20):** bundled app launches → client
+starts `Xvfb :99` at `1280x800` with bundled fonts/xkb → spawns
+`X2GoNative --display :99 --geometry 1280x800 --title <id>` → nxproxy connects →
+no XQuartz. Killing the viewer relaunches it (session preserved); killing nxproxy
+tears down viewer + Xvfb with no relaunch loop. Both targets build clean.
+
+**Still to validate (visual / interactive — needs a real display):** desktop
+renders in the Metal window; Fit/zoom/scrollbars/fullscreen UX; clean
+window-close → suspend (couldn't simulate a graceful exit via signal); input
+fidelity under scale.
+
 ## Key finding
 
 The "capture from XQuartz + inject into XQuartz" bridge is great for **display**
