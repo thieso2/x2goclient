@@ -6,6 +6,7 @@
 #include <X11/extensions/XTest.h>
 #include <X11/extensions/Xfixes.h>
 #include <X11/keysym.h>
+#include <X11/XKBlib.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -191,6 +192,72 @@ void cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press) {
     if (kc == 0) return;
     XTestFakeKeyEvent(d->dpy, kc, is_press ? True : False, CurrentTime);
     XFlush(d->dpy);
+}
+
+/* The modifier mask (1<<i) that a given keycode belongs to, or 0. */
+static unsigned int cx11_modmask_for_keycode(Display *dpy, KeyCode target) {
+    if (!target) return 0;
+    XModifierKeymap *mm = XGetModifierMapping(dpy);
+    unsigned int mask = 0;
+    if (mm) {
+        for (int i = 0; i < 8; i++)
+            for (int j = 0; j < mm->max_keypermod; j++)
+                if (mm->modifiermap[i * mm->max_keypermod + j] == target) mask = (1u << i);
+        XFreeModifiermap(mm);
+    }
+    return mask;
+}
+
+#define CX11_ISO_LEVEL3_SHIFT 0xfe03
+
+void cx11_key_char(cx11_display *d, uint32_t keysym_in) {
+    if (!d || !d->dpy) return;
+    Display *dpy = d->dpy;
+    KeySym keysym = (KeySym)keysym_in;
+
+    /* Find the (keycode, group, level) that yields this keysym, scanning all
+     * groups — some keymaps (e.g. the bundled 'de') place AltGr symbols like '@'
+     * in a second group rather than group-1 level-2. We use native keycodes +
+     * group locking so it survives nxproxy/nxagent (a remapped keycode would not). */
+    int minK, maxK; XDisplayKeycodes(dpy, &minK, &maxK);
+    KeyCode kc = 0; int grp = 0, lvl = 0;
+    for (int k = minK; k <= maxK && !kc; k++)
+        for (int g = 0; g < 4 && !kc; g++)
+            for (int l = 0; l < 6; l++)
+                if (XkbKeycodeToKeysym(dpy, (KeyCode)k, g, l) == keysym) {
+                    kc = (KeyCode)k; grp = g; lvl = l; break;
+                }
+    if (!kc) return;
+
+    int needShift  = (lvl & 1);                 /* odd levels need Shift */
+    int needLevel3 = (lvl >= 2);                /* levels 2/3 need ISO_Level3_Shift */
+    KeyCode shiftKc = XKeysymToKeycode(dpy, XK_Shift_L);
+    KeyCode l3Kc    = XKeysymToKeycode(dpy, CX11_ISO_LEVEL3_SHIFT);
+    unsigned int l3Mask = cx11_modmask_for_keycode(dpy, l3Kc);
+
+    XkbStateRec st;
+    int haveState = (XkbGetState(dpy, XkbUseCoreKbd, &st) == Success);
+    int curGroup = haveState ? st.group : 0;
+    int shiftOn  = haveState ? ((st.mods & ShiftMask) != 0) : 0;
+    int l3On     = haveState ? (l3Mask && (st.mods & l3Mask)) : 0;
+
+    if (grp != curGroup) XkbLockGroup(dpy, XkbUseCoreKbd, grp);
+    if (shiftKc && needShift != shiftOn)
+        XTestFakeKeyEvent(dpy, shiftKc, needShift ? True : False, CurrentTime);
+    if (l3Kc && needLevel3 != l3On)
+        XTestFakeKeyEvent(dpy, l3Kc, needLevel3 ? True : False, CurrentTime);
+    XSync(dpy, False);
+
+    XTestFakeKeyEvent(dpy, kc, True, CurrentTime);
+    XTestFakeKeyEvent(dpy, kc, False, CurrentTime);
+
+    /* Restore prior modifier + group state. */
+    if (shiftKc && needShift != shiftOn)
+        XTestFakeKeyEvent(dpy, shiftKc, shiftOn ? True : False, CurrentTime);
+    if (l3Kc && needLevel3 != l3On)
+        XTestFakeKeyEvent(dpy, l3Kc, l3On ? True : False, CurrentTime);
+    if (grp != curGroup) XkbLockGroup(dpy, XkbUseCoreKbd, curGroup);
+    XFlush(dpy);
 }
 
 void cx11_flush(cx11_display *d) {

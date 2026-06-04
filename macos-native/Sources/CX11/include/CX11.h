@@ -52,6 +52,13 @@ void          cx11_scroll(cx11_display *d, int up, int amount);
 /* Map a keysym to a keycode and send a key press/release. */
 void          cx11_key_sym(cx11_display *d, uint32_t keysym, int is_press);
 
+/* Type a single character (by keysym): find the keycode + shift level on the
+ * server keymap and tap it with the right modifiers (Shift / ISO_Level3_Shift),
+ * preserving the current modifier state. Use this for printable input so that
+ * layout-divergent symbols (e.g. '@' = AltGr+Q on X 'de' vs Option+L on a Mac)
+ * are produced correctly. */
+void          cx11_key_char(cx11_display *d, uint32_t keysym);
+
 /* Flush pending X requests. */
 void          cx11_flush(cx11_display *d);
 

@@ -172,6 +172,13 @@ public final class X11Session: @unchecked Sendable {
         cx11_key_sym(dpy, keysym, press ? 1 : 0)
     }
 
+    /// Type a printable character by keysym, letting the server keymap pick the
+    /// keycode + shift level (handles layout-divergent symbols like '@'/'€').
+    public func keyChar(keysym: UInt32) {
+        guard dpy != nil else { return }
+        cx11_key_char(dpy, keysym)
+    }
+
     public func flush() { if dpy != nil { cx11_flush(dpy) } }
 
     /// Stop capturing and close the X connection. Call this BEFORE the Xvfb it

@@ -259,6 +259,52 @@ do {
         print("\n===== RESULT: \(allPass ? "ALL MODES PASS ✅" : "FAILURES ❌") =====")
         if !allPass { exit(1) }
 
+    case "typetest":
+        // Start a session, open a terminal in it, type text containing '@', and
+        // screenshot — proves layout-aware/remap character injection reaches a
+        // server app through nxproxy/nxagent.
+        let app = flag("--app") ?? "\(FileManager.default.currentDirectoryPath)/dist/X2Go.app/Contents"
+        let tools = ToolPaths(
+            xvfb: "\(app)/Resources/x11/bin/Xvfb",
+            setxkbmap: "\(app)/Resources/x11/bin/setxkbmap",
+            nxproxy: "\(app)/exe/nxproxy", nxSystemDir: "\(app)/exe",
+            fontsPath: "\(app)/Resources/x11/fonts/misc",
+            xkbPath: "\(app)/Resources/x11/xkb")
+        let cfg = X2GoSession.Config(
+            endpoint: endpoint, credentials: creds, command: "startxfce4", kind: .desktop,
+            displayMode: .custom(width: 1280, height: 800), screen: Geometry(width: 1280, height: 800),
+            keyboardLayout: "de", tools: tools, preferResume: false)
+        let s = X2GoSession(config: cfg)
+        try await s.start()
+        guard let disp = await s.localDisplay, let sdisp = await s.serverDisplay else {
+            print("typetest: no display"); exit(1)
+        }
+        let ctl = CLISSHTransport(endpoint: endpoint, credentials: creds, tag: "probe-type")
+        try await ctl.connect()
+        _ = try? await ctl.exec("DISPLAY=:\(sdisp) setsid xfce4-terminal >/dev/null 2>&1 &")
+        try? await Task.sleep(nanoseconds: 6_000_000_000)   // let the terminal open + focus
+        let x = X11Session()
+        guard x.connect(displayName: disp, windowPrefix: "") else { print("typetest: attach failed"); exit(1) }
+        x.start()
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        x.key(keysym: 0xFF1B, press: true); x.key(keysym: 0xFF1B, press: false)  // Esc: dismiss polkit dialog
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        x.moveMouse(toSessionX: 200, y: 60); x.mouseButton(1, press: true); x.mouseButton(1, press: false)  // focus terminal
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        for ch in "echo a@b.de{x}|y" {
+            if let sc = ch.unicodeScalars.first {
+                let v = sc.value
+                x.keyChar(keysym: (v <= 0xFF) ? v : (0x0100_0000 | v))
+            }
+            try? await Task.sleep(nanoseconds: 60_000_000)
+        }
+        x.flush()
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        x.withFrame { p, w, h in _ = analyzeAndWritePNG(p, w: w, h: h, path: "/tmp/x2go-typetest.png") }
+        print("typetest: wrote /tmp/x2go-typetest.png (look for 'a@b.de{x}|y')")
+        x.close()
+        await s.terminate(); await ctl.disconnect()
+
     default:
         print("unknown subcommand: \(sub)"); exit(2)
     }

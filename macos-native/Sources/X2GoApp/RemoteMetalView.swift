@@ -176,21 +176,46 @@ final class RemoteMetalView: NSView {
 
     // MARK: - Keyboard
     //
-    // Modifiers are tracked by their real transitions (flagsChanged), not pressed
-    // and released around each key. Inferring from per-key flags loses the release
-    // when a modifier changes between key-down and key-up (or focus leaves
-    // mid-press), leaving it stuck down in X — which reads as a stuck Caps Lock.
+    // Two paths:
+    //  • Printable input (incl. Shift/Option-composed symbols) → send the RESULTING
+    //    character and let the server keymap pick the keycode + level (session.keyChar).
+    //    This is the only way to get layout-divergent symbols right: e.g. '@' is
+    //    Option+L on a German Mac but AltGr+Q on X's 'de' layout — translating the
+    //    physical key+modifier can't produce it, but typing the character does.
+    //  • Navigation / shortcuts (arrows, F-keys, Enter, ⌃-combos) → send the base
+    //    keysym with the live modifiers (tracked via flagsChanged).
+    // Option is NOT forwarded as Alt — on a Mac it composes symbols, so claiming it
+    // as the X Alt modifier would block '@', '{', '|', '€', … from ever being typed.
 
-    private var heldMods: Set<UInt32> = []   // currently-pressed momentary modifiers
-    private var capsOn = false               // mirrored Caps Lock state
+    private var heldMods: Set<UInt32> = []        // currently-pressed momentary modifiers
+    private var capsOn = false                    // mirrored Caps Lock state
+    private var rawDownKeys: [UInt16: UInt32] = [:]  // keyCode -> keysym sent via the raw path
 
     override func keyDown(with e: NSEvent) {
+        if e.modifierFlags.contains(.command) { return }   // leave ⌘ shortcuts to macOS
         syncModifiers(e.modifierFlags)
-        if let ks = KeyMap.keysym(for: e) { session.key(keysym: ks, press: true); session.flush() }
+        // Printable character (not a ⌃-combo) → type it via the layout-aware path.
+        if !e.modifierFlags.contains(.control),
+           let ch = e.characters, ch.count == 1,
+           let scalar = ch.unicodeScalars.first, scalar.value >= 0x20, scalar.value != 0x7F,
+           let ks = Self.charKeysym(scalar) {
+            session.keyChar(keysym: ks)
+            session.flush()
+            return
+        }
+        // Otherwise: base keysym + live modifiers (arrows, F-keys, ⌃-combos, …).
+        if let ks = KeyMap.keysym(for: e) {
+            rawDownKeys[e.keyCode] = ks
+            session.key(keysym: ks, press: true)
+            session.flush()
+        }
     }
 
     override func keyUp(with e: NSEvent) {
-        if let ks = KeyMap.keysym(for: e) { session.key(keysym: ks, press: false); session.flush() }
+        if let ks = rawDownKeys.removeValue(forKey: e.keyCode) {
+            session.key(keysym: ks, press: false)
+            session.flush()
+        }
     }
 
     override func flagsChanged(with e: NSEvent) {
@@ -198,10 +223,16 @@ final class RemoteMetalView: NSView {
         session.flush()
     }
 
+    /// X keysym for a Unicode scalar (Latin-1 maps 1:1; others use the 0x01000000 form).
+    static func charKeysym(_ s: Unicode.Scalar) -> UInt32? {
+        let v = s.value
+        if v >= 0x20 && v <= 0xFF { return v }
+        return 0x0100_0000 | v
+    }
+
     private func syncModifiers(_ f: NSEvent.ModifierFlags) {
         setMod(KeyMap.shiftL,   down: f.contains(.shift))
         setMod(KeyMap.controlL, down: f.contains(.control))
-        setMod(KeyMap.altL,     down: f.contains(.option))
         // Caps Lock is a locking toggle: tap it in X whenever the macOS state flips.
         let caps = f.contains(.capsLock)
         if caps != capsOn {
