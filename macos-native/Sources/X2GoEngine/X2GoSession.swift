@@ -29,19 +29,22 @@ public actor X2GoSession {
         public var tools: ToolPaths
         /// Prefer resuming an existing suspended session over starting a new one.
         public var preferResume: Bool
+        /// Use the system `ssh` CLI (agent, ssh_config, all key types) instead of
+        /// the pure-Swift transport.
+        public var useSystemSSH: Bool
 
         public init(endpoint: SSHEndpoint, credentials: [SSHCredential], command: String,
                     kind: SessionKind = .desktop, displayMode: DisplayMode,
                     screen: Geometry, link: LinkSpeed = .lan, pack: String = "16m-jpeg-9",
                     clipboard: ClipboardMode = .both, keyboardLayout: String = "us",
                     disableServerCompositing: Bool = true, tools: ToolPaths,
-                    preferResume: Bool = true) {
+                    preferResume: Bool = true, useSystemSSH: Bool = true) {
             self.endpoint = endpoint; self.credentials = credentials; self.command = command
             self.kind = kind; self.displayMode = displayMode; self.screen = screen
             self.link = link; self.pack = pack; self.clipboard = clipboard
             self.keyboardLayout = keyboardLayout
             self.disableServerCompositing = disableServerCompositing; self.tools = tools
-            self.preferResume = preferResume
+            self.preferResume = preferResume; self.useSystemSSH = useSystemSSH
         }
     }
 
@@ -53,20 +56,26 @@ public actor X2GoSession {
     public private(set) var wantFullscreen = false
 
     private let config: Config
-    private let ssh: SSHConnection
+    private let ssh: any SSHTransport
     private var xvfb: Process?
     private var nxproxy: Process?
-    private var forwarder: PortForwarder?
+    private var forwarder: (any SSHForwarding)?
     private var displayNum = -1
     private var agentPid = ""
 
     public init(config: Config) {
         self.config = config
-        self.ssh = SSHConnection(endpoint: config.endpoint, credentials: config.credentials)
+        if config.useSystemSSH {
+            self.ssh = CLISSHTransport(endpoint: config.endpoint, credentials: config.credentials,
+                                       tag: String(UUID().uuidString.prefix(8)))
+        } else {
+            self.ssh = SSHConnection(endpoint: config.endpoint, credentials: config.credentials)
+        }
     }
 
-    /// Total bytes carried over the NX tunnel (both directions), for stats.
-    public func transferredBytes() -> Int { forwarder?.bytesTransferred ?? 0 }
+    /// Total bytes carried over the NX tunnel, or nil if the backend (CLI ssh)
+    /// can't report it.
+    public func transferredBytes() -> Int? { forwarder?.bytesTransferred ?? nil }
 
     // MARK: - Bring-up
 

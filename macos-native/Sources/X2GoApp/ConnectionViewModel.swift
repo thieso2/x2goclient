@@ -26,7 +26,7 @@ final class ConnectionViewModel: Identifiable {
         var isFailed: Bool { if case .failed = self { return true }; return false }
     }
 
-    struct Stats: Equatable { var totalBytes = 0; var bytesPerSec = 0.0 }
+    struct Stats: Equatable { var totalBytes: Int? = nil; var bytesPerSec = 0.0 }
 
     let id: UUID                 // == the profile id (one connection per profile)
     let title: String
@@ -55,7 +55,10 @@ final class ConnectionViewModel: Identifiable {
     /// Title shown in the connection window: name + quality + live transfer stats.
     var windowTitle: String {
         guard state.isConnected else { return "\(title) — \(qualityLabel)" }
-        return "\(title) — \(qualityLabel) — \(Self.fmtBytes(stats.totalBytes)) · \(Self.fmtRate(stats.bytesPerSec))"
+        if let total = stats.totalBytes {
+            return "\(title) — \(qualityLabel) — \(Self.fmtBytes(total)) · \(Self.fmtRate(stats.bytesPerSec))"
+        }
+        return "\(title) — \(qualityLabel)"
     }
 
     /// Short status line for the dashboard card.
@@ -64,7 +67,10 @@ final class ConnectionViewModel: Identifiable {
         case .connecting: return "Connecting…"
         case .failed(let m): return "Failed: \(m)"
         case .connected:
-            return "\(qualityLabel) · \(Self.fmtRate(stats.bytesPerSec)) · \(Self.fmtBytes(stats.totalBytes))"
+            if let total = stats.totalBytes {
+                return "\(qualityLabel) · \(Self.fmtRate(stats.bytesPerSec)) · \(Self.fmtBytes(total))"
+            }
+            return "\(qualityLabel) · connected"
         }
     }
 
@@ -107,7 +113,11 @@ final class ConnectionViewModel: Identifiable {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard let self else { return }
-                let total = await self.session.transferredBytes()
+                guard let total = await self.session.transferredBytes() else {
+                    // CLI ssh: no byte stats available — stop polling.
+                    self.stats = Stats(totalBytes: nil, bytesPerSec: 0)
+                    return
+                }
                 let now = DispatchTime.now()
                 let dt = Double(now.uptimeNanoseconds - lastTime.uptimeNanoseconds) / 1e9
                 let rate = dt > 0 ? Double(total - last) / dt : 0

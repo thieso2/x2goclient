@@ -191,14 +191,18 @@ struct PasswordPrompt: View {
     let onSubmit: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
+    private func submit() { guard !password.isEmpty else { return }; onSubmit(password); dismiss() }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Password for \(profileName)").font(.headline)
-            SecureField("Password", text: $password).textFieldStyle(.roundedBorder).frame(width: 280)
+            SecureField("Password", text: $password)
+                .textFieldStyle(.roundedBorder).frame(width: 280)
+                .onSubmit(submit)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Connect") { onSubmit(password); dismiss() }
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Connect", action: submit)
+                    .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent).disabled(password.isEmpty)
             }
         }

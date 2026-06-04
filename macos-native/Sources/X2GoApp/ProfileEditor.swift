@@ -36,9 +36,11 @@ struct ProfileEditor: View {
                     TextField("User", text: $profile.user)
                     HStack {
                         TextField("Private key (optional)", text: keyBinding)
-                            .help("Leave empty to be prompted for a password on connect.")
+                            .help("Leave empty to use ssh-agent/ssh_config (system ssh) or be prompted for a password.")
                         Button("Choose…") { chooseKeyFile() }
                     }
+                    Toggle("Use system ssh (agent, ssh_config, RSA/ECDSA, certificates)",
+                           isOn: $profile.useSystemSSH)
                 }
                 Section("Session") {
                     TextField("Command", text: $profile.command)

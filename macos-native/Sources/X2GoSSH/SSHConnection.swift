@@ -41,7 +41,7 @@ public enum SSHError: Error, CustomStringConvertible, LocalizedError {
     public var errorDescription: String? { description }
 }
 
-public actor SSHConnection {
+public actor SSHConnection: SSHTransport {
     private let endpoint: SSHEndpoint
     private let credentials: [SSHCredential]
     private let group: EventLoopGroup
@@ -107,7 +107,7 @@ public actor SSHConnection {
 
     /// Open a local listener on 127.0.0.1:`localPort`; each inbound connection is
     /// bridged over a direct-tcpip SSH channel to `remoteHost:remotePort`.
-    public func openLocalForward(localPort: Int, remoteHost: String, remotePort: Int) async throws -> PortForwarder {
+    public func openLocalForward(localPort: Int, remoteHost: String, remotePort: Int) async throws -> any SSHForwarding {
         let (channel, handler) = try await sshHandler()
         return try await PortForwarder.start(
             group: group, sshChannel: channel, sshHandler: handler,

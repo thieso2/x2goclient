@@ -15,12 +15,12 @@ public final class ByteCounter: @unchecked Sendable {
     public var total: Int { lock.lock(); defer { lock.unlock() }; return v }
 }
 
-public final class PortForwarder: @unchecked Sendable {
+public final class PortForwarder: SSHForwarding, @unchecked Sendable {
     private let serverChannel: Channel
     public let localPort: Int
     private let counter: ByteCounter
     /// Total bytes forwarded through the tunnel (both directions).
-    public var bytesTransferred: Int { counter.total }
+    public var bytesTransferred: Int? { counter.total }
 
     private init(serverChannel: Channel, localPort: Int, counter: ByteCounter) {
         self.serverChannel = serverChannel

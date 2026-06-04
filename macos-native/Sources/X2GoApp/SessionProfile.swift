@@ -35,6 +35,8 @@ struct SessionProfile: Codable, Identifiable, Hashable {
     var speed: LinkSpeed = .lan
     var clipboard: ClipboardMode = .both
     var keyboardLayout: String = "us"
+    /// Use the system `ssh` (agent, ssh_config, RSA/ECDSA/certs) vs pure-Swift SSH.
+    var useSystemSSH: Bool = true
 
     var displayMode: DisplayMode {
         switch displayKind {
@@ -47,6 +49,32 @@ struct SessionProfile: Codable, Identifiable, Hashable {
     var resolvedPack: String { "\(pack)-\(quality)" }
 
     var subtitle: String { "\(user)@\(host)" + (sshPort != 22 ? ":\(sshPort)" : "") }
+
+    init() {}
+
+    /// Tolerant decoder: any key missing from older saved JSON falls back to its
+    /// default, so adding profile fields never wipes the user's saved sessions.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func g<T: Decodable>(_ k: CodingKeys, _ d: T) -> T { (try? c.decode(T.self, forKey: k)) ?? d }
+        id = g(.id, UUID())
+        name = g(.name, "New Session")
+        host = g(.host, "")
+        sshPort = g(.sshPort, 22)
+        user = g(.user, "")
+        keyPath = (try? c.decode(String?.self, forKey: .keyPath)) ?? nil
+        command = g(.command, "startxfce4")
+        rootless = g(.rootless, false)
+        displayKind = g(.displayKind, .custom)
+        width = g(.width, 1280)
+        height = g(.height, 800)
+        pack = g(.pack, "16m-jpeg")
+        quality = g(.quality, 9)
+        speed = g(.speed, .lan)
+        clipboard = g(.clipboard, .both)
+        keyboardLayout = g(.keyboardLayout, "us")
+        useSystemSSH = g(.useSystemSSH, true)
+    }
 
     func makeConfig(screen: Geometry, tools: ToolPaths, credentials: [SSHCredential]) -> X2GoSession.Config {
         X2GoSession.Config(
@@ -62,6 +90,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
             keyboardLayout: keyboardLayout,
             disableServerCompositing: true,
             tools: tools,
-            preferResume: true)
+            preferResume: true,
+            useSystemSSH: useSystemSSH)
     }
 }
