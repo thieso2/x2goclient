@@ -37,6 +37,9 @@ struct SessionProfile: Codable, Identifiable, Hashable {
     var keyboardLayout: String = "us"
     /// Use the system `ssh` (agent, ssh_config, RSA/ECDSA/certs) vs pure-Swift SSH.
     var useSystemSSH: Bool = true
+    /// Strict host-key checking. Off (default) is lenient — handy for re-imaged
+    /// LAN/dev boxes whose host key changes.
+    var strictHostKey: Bool = false
 
     var displayMode: DisplayMode {
         switch displayKind {
@@ -74,6 +77,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
         clipboard = g(.clipboard, .both)
         keyboardLayout = g(.keyboardLayout, "us")
         useSystemSSH = g(.useSystemSSH, true)
+        strictHostKey = g(.strictHostKey, false)
     }
 
     func makeConfig(screen: Geometry, tools: ToolPaths, credentials: [SSHCredential]) -> X2GoSession.Config {
@@ -91,6 +95,7 @@ struct SessionProfile: Codable, Identifiable, Hashable {
             disableServerCompositing: true,
             tools: tools,
             preferResume: true,
-            useSystemSSH: useSystemSSH)
+            useSystemSSH: useSystemSSH,
+            strictHostKey: strictHostKey)
     }
 }

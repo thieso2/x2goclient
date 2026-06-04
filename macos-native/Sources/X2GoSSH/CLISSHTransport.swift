@@ -12,10 +12,13 @@ public final class CLISSHTransport: SSHTransport, @unchecked Sendable {
     private let controlPath: String
     private let askpassPath: String?
     private let password: String?
+    private let strictHostKey: Bool
 
-    public init(endpoint: SSHEndpoint, credentials: [SSHCredential], tag: String) {
+    public init(endpoint: SSHEndpoint, credentials: [SSHCredential], tag: String,
+                strictHostKey: Bool = false) {
         self.endpoint = endpoint
         self.credentials = credentials
+        self.strictHostKey = strictHostKey
         self.controlPath = "/tmp/x2go-\(tag).sock"
         self.password = credentials.compactMap {
             if case .password(let p) = $0 { return p } else { return nil }
@@ -38,8 +41,15 @@ public final class CLISSHTransport: SSHTransport, @unchecked Sendable {
     private var commonArgs: [String] {
         var a = ["-o", "ControlPath=\(controlPath)",
                  "-p", "\(endpoint.port)",
-                 "-o", "StrictHostKeyChecking=accept-new",
                  "-o", "ConnectTimeout=20"]
+        if strictHostKey {
+            // Use the user's known_hosts; new hosts auto-add, changed hosts fail.
+            a += ["-o", "StrictHostKeyChecking=accept-new"]
+        } else {
+            // Lenient (LAN/dev boxes get re-imaged): never fail on host keys.
+            a += ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                  "-o", "LogLevel=ERROR"]
+        }
         for c in credentials {
             if case .privateKeyFile(let url) = c {
                 a += ["-i", url.path, "-o", "IdentitiesOnly=yes"]

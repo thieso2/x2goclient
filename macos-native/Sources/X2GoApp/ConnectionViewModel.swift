@@ -37,8 +37,12 @@ final class ConnectionViewModel: Identifiable {
     private(set) var sessionSize = CGSize(width: 1280, height: 800)
     private(set) var displayName: String?
     var stats = Stats()
+    var desktopReady = false     // first non-black frame seen
     let zoom = ZoomControl()
     let wantFullscreen: Bool
+    /// Existing server sessions to offer for reconnect (drives the chooser sheet).
+    var pendingSessions: [X2GoProtocol.SessionInfo]?
+    private var choiceCont: CheckedContinuation<X2GoSession.SessionChoice, Never>?
 
     private let session: X2GoSession
     private var torn = false
@@ -81,7 +85,9 @@ final class ConnectionViewModel: Identifiable {
             do {
                 self.state = .connecting("connecting…")
                 self.renderer = MetalRenderer()    // off the click; behind the spinner
-                try await self.session.start()
+                try await self.session.start(chooser: { [weak self] sessions in
+                    await self?.chooseSession(sessions) ?? .new
+                })
                 guard let disp = await self.session.localDisplay else {
                     throw NSError(domain: "X2Go", code: 1,
                                   userInfo: [NSLocalizedDescriptionKey: "no local display"])
@@ -111,12 +117,14 @@ final class ConnectionViewModel: Identifiable {
             var last = 0
             var lastTime = DispatchTime.now()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self else { return }
+                if !self.desktopReady, self.x11?.hasContent == true { self.desktopReady = true }
                 guard let total = await self.session.transferredBytes() else {
-                    // CLI ssh: no byte stats available — stop polling.
+                    // CLI ssh: no byte stats — keep checking desktop readiness only.
                     self.stats = Stats(totalBytes: nil, bytesPerSec: 0)
-                    return
+                    if self.desktopReady { return }
+                    continue
                 }
                 let now = DispatchTime.now()
                 let dt = Double(now.uptimeNanoseconds - lastTime.uptimeNanoseconds) / 1e9
@@ -125,6 +133,23 @@ final class ConnectionViewModel: Identifiable {
                 last = total; lastTime = now
             }
         }
+    }
+
+    /// Called by the engine when existing sessions could be reconnected. Presents
+    /// the chooser and awaits the user's pick.
+    func chooseSession(_ sessions: [X2GoProtocol.SessionInfo]) async -> X2GoSession.SessionChoice {
+        state = .connecting("choose a session…")
+        return await withCheckedContinuation { cont in
+            self.choiceCont = cont
+            self.pendingSessions = sessions
+        }
+    }
+
+    func resolveChoice(_ choice: X2GoSession.SessionChoice) {
+        pendingSessions = nil
+        state = .connecting("connecting…")
+        choiceCont?.resume(returning: choice)
+        choiceCont = nil
     }
 
     /// Close the display BEFORE suspending (which kills Xvfb) to avoid an XIO abort.

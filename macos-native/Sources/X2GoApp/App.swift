@@ -66,6 +66,16 @@ struct ConnectionView: View {
                 }
             case .connected:
                 MetalHost(vm: vm).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if !vm.desktopReady {
+                            VStack(spacing: 10) {
+                                ProgressView()
+                                Text("Starting desktop…").foregroundStyle(.secondary)
+                            }
+                            .padding(20)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
             case .failed(let msg):
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -74,6 +84,54 @@ struct ConnectionView: View {
             }
         }
         .navigationTitle(vm.windowTitle)   // live: name + transfer stats
+        .overlay {
+            if let sessions = vm.pendingSessions {
+                SessionChooserView(sessions: sessions, vm: vm)
+            }
+        }
+    }
+}
+
+/// Offers existing server sessions to reconnect to (suspend/resume is X2Go's
+/// signature feature), or start a new one.
+struct SessionChooserView: View {
+    let sessions: [X2GoProtocol.SessionInfo]
+    let vm: ConnectionViewModel
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+            VStack(spacing: 14) {
+                Text("Reconnect to a session?").font(.headline)
+                Text("This server already has sessions running:")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                ForEach(sessions, id: \.sessionId) { s in
+                    Button { vm.resolveChoice(.resume(s)) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: s.isSuspended ? "pause.circle.fill" : "play.circle.fill")
+                                .foregroundStyle(s.isSuspended ? .orange : .green)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.isSuspended ? "Suspended session" : "Running session")
+                                Text("display :\(s.display) · started \(s.createTime)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.right.circle")
+                        }
+                        .frame(width: 360)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                HStack {
+                    Button("New Session") { vm.resolveChoice(.new) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Cancel") { vm.resolveChoice(.cancel) }
+                }
+                .padding(.top, 4)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .frame(maxWidth: 460)
+        }
     }
 }
 

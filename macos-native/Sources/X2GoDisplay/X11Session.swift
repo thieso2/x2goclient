@@ -113,13 +113,28 @@ public final class X11Session: @unchecked Sendable {
         _ = stopped.wait(timeout: .now() + 1.0)
     }
 
+    private var _hasContent = false
+    /// True once a captured frame has non-black pixels (the remote desktop has
+    /// actually drawn — used to show a "starting…" hint until then).
+    public var hasContent: Bool { lock.lock(); defer { lock.unlock() }; return _hasContent }
+
     private func captureLoop() {
         defer { stopped.signal() }
         guard let buf = buffer else { return }
         let interval: TimeInterval = 1.0 / 30.0
+        let count = width * height
+        let step = max(1, count / 64)
         while running {
             lock.lock()
             _ = cx11_capture_bgra(dpy, window, Int32(width), Int32(height), buf)
+            if !_hasContent {
+                var i = 0
+                while i < count {
+                    let p = i * 4
+                    if Int(buf[p]) + Int(buf[p + 1]) + Int(buf[p + 2]) > 24 { _hasContent = true; break }
+                    i += step
+                }
+            }
             lock.unlock()
             Thread.sleep(forTimeInterval: interval)
         }

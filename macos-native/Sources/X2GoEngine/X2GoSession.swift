@@ -32,21 +32,33 @@ public actor X2GoSession {
         /// Use the system `ssh` CLI (agent, ssh_config, all key types) instead of
         /// the pure-Swift transport.
         public var useSystemSSH: Bool
+        /// Strict host-key checking (system ssh). Off = lenient for re-imaged boxes.
+        public var strictHostKey: Bool
 
         public init(endpoint: SSHEndpoint, credentials: [SSHCredential], command: String,
                     kind: SessionKind = .desktop, displayMode: DisplayMode,
                     screen: Geometry, link: LinkSpeed = .lan, pack: String = "16m-jpeg-9",
                     clipboard: ClipboardMode = .both, keyboardLayout: String = "us",
                     disableServerCompositing: Bool = true, tools: ToolPaths,
-                    preferResume: Bool = true, useSystemSSH: Bool = true) {
+                    preferResume: Bool = true, useSystemSSH: Bool = true,
+                    strictHostKey: Bool = false) {
             self.endpoint = endpoint; self.credentials = credentials; self.command = command
             self.kind = kind; self.displayMode = displayMode; self.screen = screen
             self.link = link; self.pack = pack; self.clipboard = clipboard
             self.keyboardLayout = keyboardLayout
             self.disableServerCompositing = disableServerCompositing; self.tools = tools
             self.preferResume = preferResume; self.useSystemSSH = useSystemSSH
+            self.strictHostKey = strictHostKey
         }
     }
+
+    /// What to do with the sessions x2golistsessions reports.
+    public enum SessionChoice: Sendable {
+        case new
+        case resume(SessionInfo)
+        case cancel
+    }
+    public typealias SessionChooser = @Sendable ([SessionInfo]) async -> SessionChoice
 
     public private(set) var phase: Phase = .idle
     public private(set) var localDisplay: String?      // ":N" of our Xvfb
@@ -67,7 +79,8 @@ public actor X2GoSession {
         self.config = config
         if config.useSystemSSH {
             self.ssh = CLISSHTransport(endpoint: config.endpoint, credentials: config.credentials,
-                                       tag: String(UUID().uuidString.prefix(8)))
+                                       tag: String(UUID().uuidString.prefix(8)),
+                                       strictHostKey: config.strictHostKey)
         } else {
             self.ssh = SSHConnection(endpoint: config.endpoint, credentials: config.credentials)
         }
@@ -79,9 +92,11 @@ public actor X2GoSession {
 
     // MARK: - Bring-up
 
-    public func start() async throws {
+    /// `chooser` is consulted when x2golistsessions reports existing sessions, so
+    /// the UI can offer reconnect-vs-new. If nil, falls back to preferResume.
+    public func start(chooser: SessionChooser? = nil) async throws {
         do {
-            try await bringUp()
+            try await bringUp(chooser: chooser)
         } catch {
             phase = .failed("\(error)")
             await teardownLocal()
@@ -89,7 +104,7 @@ public actor X2GoSession {
         }
     }
 
-    private func bringUp() async throws {
+    private func bringUp(chooser: SessionChooser?) async throws {
         phase = .connecting
         try await ssh.connect()
 
@@ -101,9 +116,21 @@ public actor X2GoSession {
         self.wantFullscreen = resolved.wantFullscreen
         let geo = resolved.geometry.token
 
-        // Choose resume vs new.
+        // Decide: offer the user existing sessions to reconnect, or start new.
+        let choice: SessionChoice
+        if let chooser, !list.isEmpty {
+            choice = await chooser(list)
+        } else if config.preferResume, let s = list.first(where: { $0.isSuspended }) {
+            choice = .resume(s)
+        } else {
+            choice = .new
+        }
+
         var cookie = "", serverDisp = "", sid = "", pid = "", grPort = 0
-        if config.preferResume, let s = list.first(where: { $0.isSuspended }) {
+        switch choice {
+        case .cancel:
+            throw EngineError.cancelled
+        case .resume(let s):
             phase = .resuming
             let out = try await ssh.exec(X2GoCommand.resumeSession(
                 id: s.sessionId, geometry: geo, link: config.link, pack: config.pack,
@@ -112,7 +139,7 @@ public actor X2GoSession {
             let ports = X2GoParser.resumeReply(out)
             cookie = s.cookie; serverDisp = s.display; sid = s.sessionId; pid = s.agentPid
             grPort = Int(ports.grPort ?? "") ?? (s.grPortNumber ?? 0)
-        } else {
+        case .new:
             phase = .starting
             let p = X2GoCommand.StartAgentParams(
                 geometry: geo, link: config.link, pack: config.pack, depth: 24,
@@ -284,13 +311,16 @@ public actor X2GoSession {
         "else sed -i \"/name=\\\"general\\\"/a <property name=\\\"use_compositing\\\" type=\\\"bool\\\" value=\\\"false\\\"/>\" \"$F\"; fi"
 }
 
-public enum EngineError: Error, CustomStringConvertible {
+public enum EngineError: Error, CustomStringConvertible, LocalizedError {
     case badReply(String)
     case xvfbFailed(String)
+    case cancelled
     public var description: String {
         switch self {
         case .badReply(let s): return "unexpected server reply: \(s)"
         case .xvfbFailed(let d): return "Xvfb \(d) did not come up"
+        case .cancelled: return "cancelled"
         }
     }
+    public var errorDescription: String? { description }
 }

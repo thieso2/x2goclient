@@ -41,6 +41,8 @@ struct ProfileEditor: View {
                     }
                     Toggle("Use system ssh (agent, ssh_config, RSA/ECDSA, certificates)",
                            isOn: $profile.useSystemSSH)
+                    Toggle("Strict host-key checking", isOn: $profile.strictHostKey)
+                        .help("Off (default) tolerates re-imaged hosts whose key changed.")
                 }
                 Section("Session") {
                     TextField("Command", text: $profile.command)
