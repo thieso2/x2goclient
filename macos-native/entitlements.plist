@@ -8,5 +8,10 @@
   <!-- Bundled X11 dylibs/binaries are re-signed with the same Developer ID, but
        keep this as a safety net for mixed-signature loads. -->
   <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <!-- Qt's QRegularExpression (PCRE2) JIT-compiles patterns (e.g. parsing SVG
+       icons). Hardened runtime blocks JIT/executable memory without these,
+       causing an EXC_BREAKPOINT in pthread_jit_write_protect_np at startup. -->
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
 </dict>
 </plist>
