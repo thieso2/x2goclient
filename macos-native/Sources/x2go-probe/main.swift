@@ -163,6 +163,98 @@ do {
                      bytes, secs, Double(bytes) / 1e6 / max(secs, 0.001)))
         await conn.disconnect()
 
+    case "lifecycle":
+        // Headless e2e of all three disconnect modes: connect (new) -> render ->
+        // disconnect[mode] -> verify server state -> reconnect -> verify
+        // resume/new + render. No UI needed.
+        let geomParts = (flag("--geom") ?? "1280x800").split(separator: "x")
+        let gw = Int(geomParts.first ?? "1280") ?? 1280
+        let gh = Int(geomParts.count > 1 ? geomParts[1] : "800") ?? 800
+        let repo = flag("--repo") ?? "\(FileManager.default.currentDirectoryPath)/.."
+        let nxproxy = flag("--nxproxy") ?? "\(repo)/build-mac/x2goclient.app/Contents/exe/nxproxy"
+        let tools = ToolPaths(xvfb: flag("--xvfb") ?? "/opt/X11/bin/Xvfb",
+                              setxkbmap: "/opt/X11/bin/setxkbmap", nxproxy: nxproxy,
+                              nxSystemDir: (nxproxy as NSString).deletingLastPathComponent)
+        func cfg(_ resume: Bool) -> X2GoSession.Config {
+            X2GoSession.Config(endpoint: endpoint, credentials: creds, command: "startxfce4",
+                kind: .desktop, displayMode: .custom(width: gw, height: gh),
+                screen: Geometry(width: gw, height: gh), tools: tools, preferResume: resume)
+        }
+        func capture(_ disp: String) async -> Double {
+            let x = X11Session()
+            guard x.connect(displayName: disp, windowPrefix: "") else { return 0 }
+            x.start(); try? await Task.sleep(nanoseconds: 2_500_000_000)
+            var f = 0.0; x.withFrame { p, w, h in f = analyzeAndWritePNG(p, w: w, h: h, path: nil) }
+            x.close(); return f
+        }
+        let ctl = CLISSHTransport(endpoint: endpoint, credentials: creds, tag: "probe-life")
+        try await ctl.connect()
+        func statusOf(_ sid: String) async -> String {
+            let out = (try? await ctl.exec("x2golistsessions").stdoutString) ?? ""
+            for r in X2GoParser.sessionList(out) where r.sessionId == sid { return r.status }
+            return "GONE"
+        }
+        func cleanAll() async {
+            _ = try? await ctl.exec("for s in $(x2golistsessions 2>/dev/null|cut -d'|' -f2); do x2goterminate-session \"$s\" >/dev/null 2>&1; done")
+        }
+        let modes = (flag("--mode").map { [$0] }) ?? ["suspend", "keep", "terminate"]
+        var allPass = true
+        for mode in modes {
+            print("\n===== MODE: \(mode) =====")
+            await cleanAll(); try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let s1 = X2GoSession(config: cfg(false))
+            try await s1.start()
+            guard let sid1 = await s1.sessionId, let d1 = await s1.localDisplay else {
+                print("FAIL: S1 did not start"); allPass = false; continue
+            }
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            let f1 = await capture(d1)
+            print(String(format: "S1: %@ display=%@ rendered=%.0f%%", sid1, d1, f1 * 100))
+
+            if mode == "keep" {
+                // Keep running = the connection stays live (proxy/Xvfb up, server
+                // session R) and is instantly re-displayable. No disconnect/reconnect.
+                let st = await statusOf(sid1)
+                let f2 = await capture(d1)   // re-attach to the still-live display
+                let pass = (st == "R") && f1 > 0.02 && f2 > 0.02
+                print("keep: server status=\(st) (expect R), re-render=\(String(format: "%.0f%%", f2 * 100)) -> \(pass ? "PASS ✅" : "FAIL ❌")")
+                allPass = allPass && pass
+                await s1.terminate()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                continue
+            }
+
+            switch mode {
+            case "suspend": await s1.suspend()
+            default:        await s1.terminate()
+            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            let st = await statusOf(sid1)
+            let expStatus = (mode == "suspend") ? "S" : "GONE"
+            print("after \(mode): server status=\(st) (expect \(expStatus))")
+
+            let s2 = X2GoSession(config: cfg(true))
+            try await s2.start()
+            guard let sid2 = await s2.sessionId, let d2 = await s2.localDisplay else {
+                print("FAIL: S2 did not start"); allPass = false; continue
+            }
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            let f2 = await capture(d2)
+            print(String(format: "S2: %@ display=%@ rendered=%.0f%%", sid2, d2, f2 * 100))
+            let resumed = (sid2 == sid1)
+            let statusOK = (st == expStatus)
+            let idOK = (mode == "terminate") ? !resumed : resumed
+            let renderOK = f2 > 0.02
+            let pass = statusOK && idOK && renderOK
+            print("\(mode): status=\(statusOK ? "ok" : "BAD") reconnect=\(idOK ? "ok" : "BAD")(resumed=\(resumed)) render=\(renderOK ? "ok" : "BAD") -> \(pass ? "PASS ✅" : "FAIL ❌")")
+            allPass = allPass && pass
+            await s2.terminate()
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        await cleanAll(); await ctl.disconnect()
+        print("\n===== RESULT: \(allPass ? "ALL MODES PASS ✅" : "FAILURES ❌") =====")
+        if !allPass { exit(1) }
+
     default:
         print("unknown subcommand: \(sub)"); exit(2)
     }

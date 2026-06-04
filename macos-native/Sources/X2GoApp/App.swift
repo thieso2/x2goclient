@@ -37,21 +37,22 @@ final class ConnectionWindowDelegate: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard let c = AppState.shared.coordinator, c.isActive(id) else { return true }
         let alert = NSAlert()
-        alert.messageText = "Disconnect this session?"
+        alert.messageText = "Close this session window?"
         alert.informativeText = """
-            Suspend: keep apps running on the server, resume later (recommended).
-            Keep running: just close this window; leave the session running.
+            Keep running: just close the window; the session stays live in the \
+            background — reopen it instantly from the dashboard (recommended).
+            Suspend: disconnect and suspend on the server; resume later.
             Terminate: end the session and close all its apps.
             """
-        alert.addButton(withTitle: "Suspend")        // .alertFirstButtonReturn
-        alert.addButton(withTitle: "Keep Running")   // .alertSecondButtonReturn
+        alert.addButton(withTitle: "Keep Running")   // .alertFirstButtonReturn
+        alert.addButton(withTitle: "Suspend")        // .alertSecondButtonReturn
         alert.addButton(withTitle: "Terminate")      // .alertThirdButtonReturn
         let cancel = alert.addButton(withTitle: "Cancel")
         cancel.keyEquivalent = "\u{1b}"              // Esc
         switch alert.runModal() {
-        case .alertFirstButtonReturn:  Task { await c.close(id, mode: .suspend) };     return true
-        case .alertSecondButtonReturn: Task { await c.close(id, mode: .keepRunning) }; return true
-        case .alertThirdButtonReturn:  Task { await c.close(id, mode: .terminate) };   return true
+        case .alertFirstButtonReturn:  return true   // keep running: close window, leave connection alive
+        case .alertSecondButtonReturn: Task { await c.close(id, mode: .suspend) };   return true
+        case .alertThirdButtonReturn:  Task { await c.close(id, mode: .terminate) }; return true
         default: return false   // Cancel
         }
     }

@@ -124,8 +124,10 @@ public actor X2GoSession {
         if let chooser, !list.isEmpty {
             FileHandle.standardError.write(Data("X2Go: invoking chooser\n".utf8))
             choice = await chooser(list)
-        } else if config.preferResume, let s = list.first(where: { $0.isSuspended }) {
-            FileHandle.standardError.write(Data("X2Go: auto-resume \(s.sessionId)\n".utf8))
+        } else if config.preferResume,
+                  let s = list.first(where: { $0.isSuspended }) ?? list.first(where: { $0.isRunning }) {
+            // Resume a suspended session, or take over a running one (keep-running reconnect).
+            FileHandle.standardError.write(Data("X2Go: auto-resume \(s.sessionId) [\(s.status)]\n".utf8))
             choice = .resume(s)
         } else {
             FileHandle.standardError.write(Data("X2Go: starting NEW\n".utf8))
@@ -218,14 +220,6 @@ public actor X2GoSession {
             phase = .terminating
             _ = try? await ssh.exec(X2GoCommand.terminate(id: sid))
         }
-        await teardownLocal()
-        await ssh.disconnect()
-        phase = .closed
-    }
-
-    /// Disconnect locally but leave the session running on the server (no
-    /// suspend/terminate) — reconnect later takes it over.
-    public func detach() async {
         await teardownLocal()
         await ssh.disconnect()
         phase = .closed

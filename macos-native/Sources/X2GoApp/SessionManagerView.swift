@@ -79,11 +79,6 @@ struct SessionManagerView: View {
                 Task { await coordinator.close(p.id, mode: .suspend) }
                 if let w { dismissWindow(id: "connection", value: w) }
             }
-            Button("Keep Running") {
-                let w = coordinator.connection(for: p.id)?.windowID
-                Task { await coordinator.close(p.id, mode: .keepRunning) }
-                if let w { dismissWindow(id: "connection", value: w) }
-            }
             Button("Terminate", role: .destructive) {
                 let w = coordinator.connection(for: p.id)?.windowID
                 Task { await coordinator.close(p.id, mode: .terminate) }
@@ -91,7 +86,7 @@ struct SessionManagerView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Suspend keeps apps running (resume later). Keep running leaves the session running and just closes this window. Terminate ends the session.")
+            Text("Suspend disconnects and suspends on the server (resume later). Terminate ends the session and closes its apps.")
         }
         .confirmationDialog("Delete “\(deleteTarget?.name ?? "")”?",
                             isPresented: Binding(get: { deleteTarget != nil },

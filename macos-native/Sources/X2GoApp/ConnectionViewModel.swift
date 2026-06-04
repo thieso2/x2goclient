@@ -166,11 +166,11 @@ final class ConnectionViewModel: Identifiable {
         choiceCont = nil
     }
 
-    enum CloseMode { case suspend, terminate, keepRunning }
+    enum CloseMode { case suspend, terminate }
 
     /// Close the display BEFORE suspend/terminate (which kills Xvfb) to avoid an
-    /// XIO abort. suspend = resumable; terminate = end; keepRunning = leave the
-    /// server session running and just drop the local viewer.
+    /// XIO abort. (Keep-running is NOT a teardown — the connection stays alive in
+    /// the background; only the window is hidden.)
     func teardown(_ mode: CloseMode = .suspend) async {
         if torn { return }
         torn = true
@@ -179,7 +179,6 @@ final class ConnectionViewModel: Identifiable {
         switch mode {
         case .suspend: await session.suspend()
         case .terminate: await session.terminate()
-        case .keepRunning: await session.detach()
         }
     }
 
