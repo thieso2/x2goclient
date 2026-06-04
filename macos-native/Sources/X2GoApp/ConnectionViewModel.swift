@@ -121,10 +121,16 @@ final class ConnectionViewModel: Identifiable {
         statsTask = Task { [weak self] in
             var last = 0
             var lastTime = DispatchTime.now()
+            let started = DispatchTime.now()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self else { return }
-                if !self.desktopReady, self.x11?.hasContent == true { self.desktopReady = true }
+                if !self.desktopReady {
+                    let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1e9
+                    // Hide the overlay once content is detected, or after a grace
+                    // period regardless (never leave it stuck).
+                    if self.x11?.hasContent == true || elapsed > 8 { self.desktopReady = true }
+                }
                 guard let total = await self.session.transferredBytes() else {
                     // CLI ssh: no byte stats — keep checking desktop readiness only.
                     self.stats = Stats(totalBytes: nil, bytesPerSec: 0)

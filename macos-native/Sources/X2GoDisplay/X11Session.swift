@@ -123,16 +123,17 @@ public final class X11Session: @unchecked Sendable {
         guard let buf = buffer else { return }
         let interval: TimeInterval = 1.0 / 30.0
         let count = width * height
-        let step = max(1, count / 64)
         while running {
             lock.lock()
             _ = cx11_capture_bgra(dpy, window, Int32(width), Int32(height), buf)
             if !_hasContent {
+                // Scan every pixel (early-out) so sparse content — e.g. a terminal's
+                // text on a black root — is detected, not just a coarse sample.
                 var i = 0
                 while i < count {
                     let p = i * 4
                     if Int(buf[p]) + Int(buf[p + 1]) + Int(buf[p + 2]) > 24 { _hasContent = true; break }
-                    i += step
+                    i += 1
                 }
             }
             lock.unlock()

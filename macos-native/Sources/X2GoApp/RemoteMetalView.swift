@@ -49,6 +49,7 @@ final class RemoteMetalView: NSView {
         if window == nil {
             timer?.invalidate(); timer = nil
             cursorTimer?.invalidate(); cursorTimer = nil
+            releaseHeldModifiers()
         } else {
             syncDrawableSize()
         }
@@ -154,24 +155,58 @@ final class RemoteMetalView: NSView {
     }
 
     // MARK: - Keyboard
+    //
+    // Modifiers are tracked by their real transitions (flagsChanged), not pressed
+    // and released around each key. Inferring from per-key flags loses the release
+    // when a modifier changes between key-down and key-up (or focus leaves
+    // mid-press), leaving it stuck down in X — which reads as a stuck Caps Lock.
 
-    override func keyDown(with e: NSEvent) { sendKey(e, press: true) }
-    override func keyUp(with e: NSEvent)   { sendKey(e, press: false) }
+    private var heldMods: Set<UInt32> = []   // currently-pressed momentary modifiers
+    private var capsOn = false               // mirrored Caps Lock state
 
-    private func sendKey(_ e: NSEvent, press: Bool) {
-        guard let ks = KeyMap.keysym(for: e) else { return }
-        let mods = e.modifierFlags
-        if press {
-            if mods.contains(.shift)   { session.key(keysym: KeyMap.shiftL, press: true) }
-            if mods.contains(.control) { session.key(keysym: KeyMap.controlL, press: true) }
-            if mods.contains(.option)  { session.key(keysym: KeyMap.altL, press: true) }
-            session.key(keysym: ks, press: true)
-        } else {
-            session.key(keysym: ks, press: false)
-            if mods.contains(.option)  { session.key(keysym: KeyMap.altL, press: false) }
-            if mods.contains(.control) { session.key(keysym: KeyMap.controlL, press: false) }
-            if mods.contains(.shift)   { session.key(keysym: KeyMap.shiftL, press: false) }
-        }
+    override func keyDown(with e: NSEvent) {
+        syncModifiers(e.modifierFlags)
+        if let ks = KeyMap.keysym(for: e) { session.key(keysym: ks, press: true); session.flush() }
+    }
+
+    override func keyUp(with e: NSEvent) {
+        if let ks = KeyMap.keysym(for: e) { session.key(keysym: ks, press: false); session.flush() }
+    }
+
+    override func flagsChanged(with e: NSEvent) {
+        syncModifiers(e.modifierFlags)
         session.flush()
+    }
+
+    private func syncModifiers(_ f: NSEvent.ModifierFlags) {
+        setMod(KeyMap.shiftL,   down: f.contains(.shift))
+        setMod(KeyMap.controlL, down: f.contains(.control))
+        setMod(KeyMap.altL,     down: f.contains(.option))
+        // Caps Lock is a locking toggle: tap it in X whenever the macOS state flips.
+        let caps = f.contains(.capsLock)
+        if caps != capsOn {
+            capsOn = caps
+            session.key(keysym: KeyMap.capsLock, press: true)
+            session.key(keysym: KeyMap.capsLock, press: false)
+        }
+    }
+
+    private func setMod(_ ks: UInt32, down: Bool) {
+        if down, !heldMods.contains(ks) { heldMods.insert(ks); session.key(keysym: ks, press: true) }
+        else if !down, heldMods.contains(ks) { heldMods.remove(ks); session.key(keysym: ks, press: false) }
+    }
+
+    /// Release every held momentary modifier — call when focus leaves so nothing
+    /// stays stuck down in the session.
+    private func releaseHeldModifiers() {
+        guard !heldMods.isEmpty else { return }
+        for ks in heldMods { session.key(keysym: ks, press: false) }
+        heldMods.removeAll()
+        session.flush()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseHeldModifiers()
+        return super.resignFirstResponder()
     }
 }

@@ -6,6 +6,7 @@ enum KeyMap {
     static let shiftL: UInt32   = 0xFFE1
     static let controlL: UInt32 = 0xFFE3
     static let altL: UInt32     = 0xFFE9
+    static let capsLock: UInt32 = 0xFFE5
 
     // macOS virtual keyCodes -> X keysyms for non-printable keys.
     private static let special: [UInt16: UInt32] = [
