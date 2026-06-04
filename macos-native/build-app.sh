@@ -109,6 +109,12 @@ echo "   remaining /opt/X11 references: $LEFT (want 0)"
 # AC_APPLE_ID + AC_TEAM_ID + AC_PASSWORD to notarize + staple.
 # With SIGN_ID unset, falls back to ad-hoc (runs locally only).
 SIGN_ID="${SIGN_ID:-}"
+# Auto-detect a "Developer ID Application" identity if SIGN_ID wasn't given.
+if [ -z "$SIGN_ID" ]; then
+  SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+            | grep -m1 "Developer ID Application" | sed -E 's/.*"(.*)".*/\1/')
+  [ -n "$SIGN_ID" ] && echo ">> auto-detected signing identity: $SIGN_ID"
+fi
 ENT="$HERE/entitlements.plist"
 if [ -n "$SIGN_ID" ]; then
   echo ">> codesigning with '$SIGN_ID' (hardened runtime + timestamp)..."
