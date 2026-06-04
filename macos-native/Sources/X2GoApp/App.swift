@@ -6,16 +6,20 @@ import X2GoSSH
 import X2GoDisplay
 
 // Native macOS X2Go client — one SwiftUI app, pure-Swift engine, in-app Metal
-// display. P4: a single hard-coded connection window (Session Manager +
-// multi-window arrive in P5/P6). No Qt, no external viewer.
+// display. Session Manager + window-per-connection, multi-session. No Qt, no
+// external viewer, no XQuartz.
 
 @MainActor
 final class AppState {
     static let shared = AppState()
-    var vm: ConnectionViewModel?
+    weak var coordinator: SessionCoordinator?
+    func focusedZoom() -> ZoomControl? {
+        guard let c = coordinator, let id = c.focusedID else { return nil }
+        return c.connection(for: id)?.zoom
+    }
 }
 
-/// The View menu's zoom commands talk to the live scroll view through this.
+/// The View menu's zoom commands talk to the focused connection's scroll view.
 @MainActor
 final class ZoomControl {
     weak var scrollView: RemoteScrollView?
@@ -25,7 +29,8 @@ final class ZoomControl {
     func fit()        { scrollView?.fit() }
 }
 
-/// Hosts the live remote display (RemoteScrollView + RemoteMetalView).
+/// Hosts the live remote display (RemoteScrollView + RemoteMetalView) and wires
+/// the window into the clipboard arbiter.
 struct MetalHost: NSViewRepresentable {
     let vm: ConnectionViewModel
     func makeNSView(context: Context) -> NSView {
@@ -36,9 +41,11 @@ struct MetalHost: NSViewRepresentable {
         vm.zoom.scrollView = sv
         let wantFs = vm.wantFullscreen
         let title = vm.title
+        let cid = vm.id
         DispatchQueue.main.async {
             mv.window?.makeFirstResponder(mv)
             if !title.isEmpty { mv.window?.title = title }
+            if let w = mv.window { ClipboardArbiter.shared.register(window: w, connection: cid) }
             if wantFs, let w = mv.window, !w.styleMask.contains(.fullScreen) {
                 w.toggleFullScreen(nil)
             }
@@ -68,7 +75,6 @@ struct ConnectionView: View {
                 }.padding()
             }
         }
-        .onAppear { vm.connect() }
     }
 }
 
@@ -77,13 +83,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // Keep the app running when a connection window closes (the manager stays).
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
 
-    /// Suspend the session before quitting (kills nxproxy/Xvfb cleanly).
+    /// Suspend every live session before quitting (kills nxproxy/Xvfb cleanly).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let vm = AppState.shared.vm else { return .terminateNow }
+        guard let c = AppState.shared.coordinator, !c.connections.isEmpty else { return .terminateNow }
         Task {
-            await vm.teardown()
+            await c.closeAll()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -93,46 +100,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct X2GoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @State private var vm: ConnectionViewModel
-
-    init() {
-        let config = Self.devConfig()
-        let model = ConnectionViewModel(config: config, title: "X2Go — \(config.endpoint.host)")
-        _vm = State(initialValue: model)
-        AppState.shared.vm = model
-    }
+    @State private var store = ProfileStore()
+    @State private var coordinator = SessionCoordinator()
 
     var body: some Scene {
-        WindowGroup {
-            ConnectionView(vm: vm)
+        Window("X2Go", id: "manager") {
+            SessionManagerView(store: store, coordinator: coordinator)
+                .onAppear {
+                    AppState.shared.coordinator = coordinator
+                    ClipboardArbiter.shared.configure(coordinator)
+                }
+        }
+        .defaultSize(width: 900, height: 580)
+
+        WindowGroup(id: "connection", for: UUID.self) { $cid in
+            ConnectionWindowView(coordinator: coordinator, id: cid)
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(after: .sidebar) {
-                Button("Zoom In") { AppState.shared.vm?.zoom.zoomIn() }
+                Button("Zoom In") { AppState.shared.focusedZoom()?.zoomIn() }
                     .keyboardShortcut("=", modifiers: .command)
-                Button("Zoom Out") { AppState.shared.vm?.zoom.zoomOut() }
+                Button("Zoom Out") { AppState.shared.focusedZoom()?.zoomOut() }
                     .keyboardShortcut("-", modifiers: .command)
-                Button("Actual Size") { AppState.shared.vm?.zoom.actualSize() }
+                Button("Actual Size") { AppState.shared.focusedZoom()?.actualSize() }
                     .keyboardShortcut("0", modifiers: .command)
-                Button("Fit to Window") { AppState.shared.vm?.zoom.fit() }
+                Button("Fit to Window") { AppState.shared.focusedZoom()?.fit() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                 Divider()
             }
         }
-    }
-
-    /// P4 hard-coded connection (the test server). P5 replaces this with profiles.
-    static func devConfig() -> X2GoSession.Config {
-        let key = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh/id_x2go_test")
-        return X2GoSession.Config(
-            endpoint: SSHEndpoint(host: "10.248.1.20", username: "thies"),
-            credentials: [.privateKeyFile(key)],
-            command: "startxfce4",
-            kind: .desktop,
-            displayMode: .custom(width: 1280, height: 800),
-            screen: Geometry(width: 1280, height: 800),
-            tools: AppTools.resolve(),
-            preferResume: true)
     }
 }

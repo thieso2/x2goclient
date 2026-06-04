@@ -20,7 +20,7 @@ final class ConnectionViewModel: Identifiable {
     let renderer: MetalRenderer?
     private(set) var x11: X11Session?
     private(set) var sessionSize = CGSize(width: 1280, height: 800)
-    let clipboard = ClipboardBridge()
+    private(set) var displayName: String?     // ":N" of the engine's Xvfb
     let zoom = ZoomControl()
     let wantFullscreen: Bool
     let title: String
@@ -55,8 +55,8 @@ final class ConnectionViewModel: Identifiable {
                 }
                 x.start()
                 self.x11 = x
+                self.displayName = disp
                 self.sessionSize = CGSize(width: x.width, height: x.height)
-                self.clipboard.start(display: disp)
                 self.state = .connected
             } catch {
                 self.state = .failed("\(error.localizedDescription)")
@@ -69,7 +69,6 @@ final class ConnectionViewModel: Identifiable {
         if torn { return }
         torn = true
         x11?.close(); x11 = nil
-        clipboard.stop()
         await session.suspend()
     }
 }
