@@ -41,3 +41,5 @@ x2goclient.pro.user
 
 # Swift native build
 macos-native/.build/
+macos-native/dist/
+macos-native/.build/
