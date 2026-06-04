@@ -142,8 +142,23 @@ final class RemoteMetalView: NSView {
     override func rightMouseDragged(with e: NSEvent) { moveTo(e) }
     override func otherMouseDragged(with e: NSEvent) { moveTo(e) }
 
-    override func mouseDown(with e: NSEvent)  { moveTo(e); session.mouseButton(1, press: true) }
-    override func mouseUp(with e: NSEvent)    { moveTo(e); session.mouseButton(1, press: false) }
+    // X button numbers: 1 = left, 2 = middle, 3 = right.
+    // Right is macOS's native secondary click (two-finger / Ctrl / corner).
+    // Middle has no trackpad equivalent, so ⌘-click emulates it — Command (unlike
+    // Option) isn't forwarded as a keyboard modifier, so it's a clean middle click
+    // (Option would send Alt+middle, which WMs bind to window resize).
+    private var leftButton = 1   // which X button the current left press maps to
+
+    override func mouseDown(with e: NSEvent) {
+        moveTo(e)
+        leftButton = e.modifierFlags.contains(.command) ? 2 : 1   // ⌘-click = middle
+        session.mouseButton(leftButton, press: true)
+    }
+    override func mouseUp(with e: NSEvent) {
+        moveTo(e)
+        session.mouseButton(leftButton, press: false)
+        leftButton = 1
+    }
     override func rightMouseDown(with e: NSEvent) { moveTo(e); session.mouseButton(3, press: true) }
     override func rightMouseUp(with e: NSEvent)   { moveTo(e); session.mouseButton(3, press: false) }
     override func otherMouseDown(with e: NSEvent) { moveTo(e); session.mouseButton(2, press: true) }
