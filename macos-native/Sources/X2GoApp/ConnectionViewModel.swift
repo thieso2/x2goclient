@@ -30,6 +30,7 @@ final class ConnectionViewModel: Identifiable {
 
     let id: UUID                 // == the profile id (one connection per profile)
     let title: String
+    let qualityLabel: String     // e.g. "lan·q9" — the NX speed/quality in use
     var state: UIState = .connecting("starting…")
     var renderer: MetalRenderer?
     private(set) var x11: X11Session?
@@ -43,17 +44,18 @@ final class ConnectionViewModel: Identifiable {
     private var torn = false
     private var statsTask: Task<Void, Never>?
 
-    init(profileID: UUID, config: X2GoSession.Config, title: String) {
+    init(profileID: UUID, config: X2GoSession.Config, title: String, qualityLabel: String) {
         self.id = profileID
         self.session = X2GoSession(config: config)
         self.title = title
+        self.qualityLabel = qualityLabel
         self.wantFullscreen = (config.displayMode == .fullscreen)
     }
 
-    /// Title shown in the connection window: name + live transfer stats.
+    /// Title shown in the connection window: name + quality + live transfer stats.
     var windowTitle: String {
-        guard state.isConnected else { return title }
-        return "\(title) — \(Self.fmtBytes(stats.totalBytes)) · \(Self.fmtRate(stats.bytesPerSec))"
+        guard state.isConnected else { return "\(title) — \(qualityLabel)" }
+        return "\(title) — \(qualityLabel) — \(Self.fmtBytes(stats.totalBytes)) · \(Self.fmtRate(stats.bytesPerSec))"
     }
 
     /// Short status line for the dashboard card.
@@ -61,7 +63,8 @@ final class ConnectionViewModel: Identifiable {
         switch state {
         case .connecting: return "Connecting…"
         case .failed(let m): return "Failed: \(m)"
-        case .connected: return "\(Self.fmtRate(stats.bytesPerSec)) · \(Self.fmtBytes(stats.totalBytes))"
+        case .connected:
+            return "\(qualityLabel) · \(Self.fmtRate(stats.bytesPerSec)) · \(Self.fmtBytes(stats.totalBytes))"
         }
     }
 

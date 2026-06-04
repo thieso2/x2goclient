@@ -27,7 +27,9 @@ final class SessionCoordinator {
     func connectIfNeeded(profile: SessionProfile, credentials: [SSHCredential]) {
         guard connections[profile.id] == nil else { return }
         let config = profile.makeConfig(screen: Self.screenGeometry(), tools: tools, credentials: credentials)
-        let vm = ConnectionViewModel(profileID: profile.id, config: config, title: profile.name)
+        let quality = "\(profile.speed.rawValue)·q\(profile.quality)"
+        let vm = ConnectionViewModel(profileID: profile.id, config: config, title: profile.name,
+                                     qualityLabel: quality)
         connections[profile.id] = vm
         vm.connect()
     }

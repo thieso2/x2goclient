@@ -7,7 +7,7 @@ import NIOSSH
 /// throw `unsupported`. Encrypted keys throw `encryptedNotSupported` (passphrase
 /// handling is a later addition).
 public enum OpenSSHPrivateKey {
-    public enum ParseError: Error, CustomStringConvertible {
+    public enum ParseError: Error, CustomStringConvertible, LocalizedError {
         case notOpenSSHFormat
         case encryptedNotSupported
         case unsupported(String)
@@ -15,12 +15,17 @@ public enum OpenSSHPrivateKey {
 
         public var description: String {
             switch self {
-            case .notOpenSSHFormat: return "not an OpenSSH private key (expected -----BEGIN OPENSSH PRIVATE KEY-----)"
-            case .encryptedNotSupported: return "encrypted private keys are not yet supported"
-            case .unsupported(let t): return "unsupported key type: \(t)"
-            case .malformed: return "malformed OpenSSH private key"
+            case .notOpenSSHFormat:
+                return "Not an OpenSSH key. RSA/DSA keys in the old PEM format aren't supported — convert to ed25519/ECDSA, or use password auth."
+            case .encryptedNotSupported:
+                return "This private key is passphrase-encrypted, which isn't supported yet. Use an unencrypted key, ssh-agent isn't available, or use password auth."
+            case .unsupported(let t):
+                return "Unsupported key type '\(t)'. Supported: ed25519 and ECDSA (nistp256/384/521). RSA/DSA aren't supported by the SSH library — use an ed25519/ECDSA key or password auth."
+            case .malformed:
+                return "Malformed OpenSSH private key."
             }
         }
+        public var errorDescription: String? { description }
     }
 
     /// Load a private key file and return a NIOSSHPrivateKey for SSH auth.
@@ -62,9 +67,31 @@ public enum OpenSSHPrivateKey {
             let seed = secret.prefix(32)
             let key = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
             return NIOSSHPrivateKey(ed25519Key: key)
+
+        case "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521":
+            _ = try priv.readSSHString()              // curve name
+            _ = try priv.readSSHString()              // public EC point
+            let scalar = try priv.readSSHString()     // private scalar (mpint)
+            let size = keyType.hasSuffix("256") ? 32 : (keyType.hasSuffix("384") ? 48 : 66)
+            let raw = fixedWidth(scalar, size)
+            switch size {
+            case 32: return NIOSSHPrivateKey(p256Key: try P256.Signing.PrivateKey(rawRepresentation: raw))
+            case 48: return NIOSSHPrivateKey(p384Key: try P384.Signing.PrivateKey(rawRepresentation: raw))
+            default: return NIOSSHPrivateKey(p521Key: try P521.Signing.PrivateKey(rawRepresentation: raw))
+            }
+
         default:
             throw ParseError.unsupported(keyType)
         }
+    }
+
+    /// Normalise an SSH mpint to exactly `size` big-endian bytes (strip a leading
+    /// sign byte, left-pad with zeros) for Crypto's `rawRepresentation`.
+    private static func fixedWidth(_ data: Data, _ size: Int) -> Data {
+        var bytes = [UInt8](data)
+        while bytes.count > size, bytes.first == 0 { bytes.removeFirst() }
+        if bytes.count < size { bytes = [UInt8](repeating: 0, count: size - bytes.count) + bytes }
+        return Data(bytes)
     }
 
     /// Cursor over an SSH wire-format buffer (uint32-length-prefixed strings).

@@ -29,7 +29,7 @@ public struct ExecResult: Sendable {
     public var stderrString: String { String(decoding: stderr, as: UTF8.self) }
 }
 
-public enum SSHError: Error, CustomStringConvertible {
+public enum SSHError: Error, CustomStringConvertible, LocalizedError {
     case notConnected
     case channelError(String)
     public var description: String {
@@ -38,6 +38,7 @@ public enum SSHError: Error, CustomStringConvertible {
         case .channelError(let m): return "SSH channel error: \(m)"
         }
     }
+    public var errorDescription: String? { description }
 }
 
 public actor SSHConnection {
