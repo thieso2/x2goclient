@@ -44,6 +44,10 @@ final class RemoteMetalView: NSView {
         syncDrawableSize()
     }
 
+    /// Called when the view is attached to a window — the reliable hook for window
+    /// setup (close delegate / clipboard / fullscreen).
+    var onAttach: (() -> Void)?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
@@ -52,6 +56,7 @@ final class RemoteMetalView: NSView {
             releaseHeldModifiers()
         } else {
             syncDrawableSize()
+            onAttach?()
         }
     }
 

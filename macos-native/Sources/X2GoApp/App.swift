@@ -68,21 +68,30 @@ struct MetalHost: NSViewRepresentable {
         mv.startRendering()
         let sv = RemoteScrollView(metalView: mv, sessionSize: vm.sessionSize)
         vm.zoom.scrollView = sv
-        let wantFs = vm.wantFullscreen
-        let cid = vm.id
-        DispatchQueue.main.async {
-            mv.window?.makeFirstResponder(mv)
-            if let w = mv.window {
-                ClipboardArbiter.shared.register(window: w, connection: cid)
-                let del = ConnectionWindowDelegate(id: cid)
-                w.delegate = del
-                vm.windowDelegate = del            // NSWindow.delegate is weak; retain it
-                if wantFs, !w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
-            }
-        }
+        // viewDidMoveToWindow fires exactly when the window attaches — the reliable
+        // moment to install the close delegate (the FIRST window previously missed
+        // it, so closing it skipped the suspend/terminate dialog).
+        mv.onAttach = { [vm] in MetalHost.attach(window: mv.window, metalView: mv, vm: vm) }
         return sv
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    // Fallback path; both call the same idempotent setup.
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let sv = nsView as? RemoteScrollView else { return }
+        MetalHost.attach(window: sv.window, metalView: sv.metalView, vm: vm)
+    }
+
+    /// Install the close delegate / clipboard / fullscreen once the window exists.
+    /// Idempotent (guards on the delegate already being ours).
+    static func attach(window: NSWindow?, metalView mv: RemoteMetalView, vm: ConnectionViewModel) {
+        guard let w = window, !(w.delegate is ConnectionWindowDelegate) else { return }
+        w.makeFirstResponder(mv)
+        ClipboardArbiter.shared.register(window: w, connection: vm.id)
+        let del = ConnectionWindowDelegate(id: vm.id)
+        w.delegate = del
+        vm.windowDelegate = del                 // NSWindow.delegate is weak; retain it
+        if vm.wantFullscreen, !w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
+    }
 }
 
 struct ConnectionView: View {
