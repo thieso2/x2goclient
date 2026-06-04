@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- nxproxy's wrapper sets DYLD_LIBRARY_PATH; hardened runtime strips DYLD_*
+       env unless this is allowed. -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
+  <!-- Bundled X11 dylibs/binaries are re-signed with the same Developer ID, but
+       keep this as a safety net for mixed-signature loads. -->
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>

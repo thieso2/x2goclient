@@ -10,6 +10,13 @@
 # All Mach-O references to /opt/X11 are rewritten to @rpath/@loader_path.
 #
 # Output: macos-native/dist/x2goclient.app
+#
+# Distribution (give the app to others):
+#   SIGN_ID="Developer ID Application: Your Name (TEAMID)" \
+#   NOTARY_PROFILE=x2go-notary \           # from: xcrun notarytool store-credentials
+#       ./build-app.sh
+#   (or AC_APPLE_ID=… AC_TEAM_ID=… AC_PASSWORD=… instead of NOTARY_PROFILE)
+# With no SIGN_ID it builds an ad-hoc bundle that runs only on this machine.
 set -uo pipefail   # not -e: many otool/install_name_tool steps are best-effort
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -81,40 +88,11 @@ echo ">> bundling fonts + xkb..."
 cp -R "$OPT/share/fonts/misc/." "$X11FONTS/misc/" 2>/dev/null || true
 cp -R "$OPT/share/X11/xkb/."    "$X11XKB/"        2>/dev/null || true
 
-# --- launcher: MacOS/x2goclient -> wrapper; real binary -> x2goclient.real ---
-echo ">> installing launcher..."
+# --- launcher: compiled Mach-O main executable (needed for hardened runtime /
+#     notarization). Real Qt binary -> x2goclient.real. ---
+echo ">> compiling launcher..."
 if [ ! -f "$C/MacOS/x2goclient.real" ]; then mv "$C/MacOS/x2goclient" "$C/MacOS/x2goclient.real"; fi
-cat > "$C/MacOS/x2goclient" <<'LAUNCH'
-#!/bin/bash
-# Self-contained launcher: start bundled Xvfb + native Metal window, then the
-# Qt client (its nxproxy renders the session onto Xvfb). No XQuartz required.
-set -u
-D="$(cd "$(dirname "$0")/.." && pwd)"            # .../Contents
-BIN="$D/Resources/x11/bin"; FONTS="$D/Resources/x11/fonts/misc"; XKB="$D/Resources/x11/xkb"
-DISP=99
-while [ -e "/tmp/.X${DISP}-lock" ]; do DISP=$((DISP+1)); done
-export XKB_BINDIR="$BIN"
-"$BIN/Xvfb" :$DISP -screen 0 1280x800x24 -ac -noreset -fp "$FONTS" -xkbdir "$XKB" \
-    >/tmp/x2go-xvfb.log 2>&1 &
-XVFB=$!
-sleep 1.5
-export DISPLAY=:$DISP
-# Match the X keyboard layout to macOS BEFORE the session connects (nxagent
-# copies the client keymap at startup) so umlauts/accents type correctly.
-ml=$(defaults read ~/Library/Preferences/com.apple.HIToolbox.plist AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null)
-case "$ml" in
-  *German*) XL=de;; *Swiss*) XL=ch;; *British*) XL=gb;; *French*) XL=fr;;
-  *Spanish*) XL=es;; *Italian*) XL=it;; *Portuguese*) XL=pt;; *Dutch*) XL=nl;;
-  *Norwegian*) XL=no;; *Swedish*) XL=se;; *Danish*) XL=dk;; *Finnish*) XL=fi;; *) XL=us;;
-esac
-"$BIN/setxkbmap" "$XL" 2>/dev/null
-"$D/exe/X2GoNative" --display ":$DISP" >/tmp/x2go-native.log 2>&1 &
-NATIVE=$!
-cleanup() { kill "$NATIVE" "$XVFB" 2>/dev/null; rm -f "/tmp/.X${DISP}-lock"; }
-trap cleanup EXIT
-"$D/MacOS/x2goclient.real" "$@"
-LAUNCH
-chmod +x "$C/MacOS/x2goclient"
+clang -arch arm64 -O2 "$HERE/launcher.c" -o "$C/MacOS/x2goclient" || { echo "launcher build failed"; exit 1; }
 
 # --- verify self-contained + sign ---
 echo ">> verifying no /opt/X11 references remain in bundled Mach-O..."
@@ -125,13 +103,44 @@ for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$C/exe/X2GoNative" "$C/exe/nxproxy" "
 done
 echo "   remaining /opt/X11 references: $LEFT (want 0)"
 
-# install_name_tool invalidated signatures; re-sign every modified Mach-O
-# individually (codesign --deep does NOT cover binaries under Resources/), then
-# the whole bundle. On Apple Silicon an invalid signature => instant SIGKILL.
-echo ">> codesigning bundled binaries..."
-for f in "$LIBS"/*.dylib "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$X11BIN/setxkbmap" "$C/exe/X2GoNative" \
-         "$C/exe/nxproxy" "$C/exe/nxproxy.real" "$C/exe/libXcomp.3.dylib"; do
-  [ -f "$f" ] && codesign --force -s - "$f" >/dev/null 2>&1
-done
-codesign --force --deep -s - "$OUT" >/dev/null 2>&1 || true
+# --- codesign (+ optional notarize) ---
+# Set SIGN_ID="Developer ID Application: Name (TEAMID)" to sign for distribution.
+# Also set NOTARY_PROFILE (a `notarytool store-credentials` profile) OR
+# AC_APPLE_ID + AC_TEAM_ID + AC_PASSWORD to notarize + staple.
+# With SIGN_ID unset, falls back to ad-hoc (runs locally only).
+SIGN_ID="${SIGN_ID:-}"
+ENT="$HERE/entitlements.plist"
+if [ -n "$SIGN_ID" ]; then
+  echo ">> codesigning with '$SIGN_ID' (hardened runtime + timestamp)..."
+  SIGN=(codesign --force --options runtime --timestamp --entitlements "$ENT" -s "$SIGN_ID")
+else
+  echo ">> codesigning ad-hoc (no SIGN_ID set => NOT distributable/notarizable)..."
+  SIGN=(codesign --force -s -)
+fi
+# Sign inner Mach-O first (deep doesn't cover Resources/), then nested apps/frameworks, then the bundle.
+while IFS= read -r f; do "${SIGN[@]}" "$f" >/dev/null 2>&1; done < <(
+  find "$OUT" -type f \( -name '*.dylib' -o -path '*/Resources/x11/bin/*' -o -path '*/Contents/exe/*' \) 2>/dev/null
+)
+[ -f "$C/MacOS/x2goclient.real" ] && "${SIGN[@]}" "$C/MacOS/x2goclient.real" >/dev/null 2>&1
+"${SIGN[@]}" "$C/MacOS/x2goclient" >/dev/null 2>&1            # the launcher (carries entitlements)
+if [ -n "$SIGN_ID" ]; then codesign --force --deep --options runtime --timestamp --entitlements "$ENT" -s "$SIGN_ID" "$OUT" >/dev/null 2>&1
+else codesign --force --deep -s - "$OUT" >/dev/null 2>&1; fi
+
+# --- notarize + staple ---
+if [ -n "$SIGN_ID" ] && { [ -n "${NOTARY_PROFILE:-}" ] || [ -n "${AC_APPLE_ID:-}" ]; }; then
+  echo ">> notarizing (this can take a few minutes)..."
+  ZIP="$HERE/dist/x2goclient.zip"; rm -f "$ZIP"
+  ditto -c -k --keepParent "$OUT" "$ZIP"
+  if [ -n "${NOTARY_PROFILE:-}" ]; then
+    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  else
+    xcrun notarytool submit "$ZIP" --apple-id "$AC_APPLE_ID" --team-id "$AC_TEAM_ID" --password "$AC_PASSWORD" --wait
+  fi
+  echo ">> stapling ticket..."
+  xcrun stapler staple "$OUT" && xcrun stapler validate "$OUT"
+  rm -f "$ZIP"
+  echo ">> notarized + stapled — give $OUT to anyone."
+elif [ -n "$SIGN_ID" ]; then
+  echo ">> signed with Developer ID but NOT notarized (set NOTARY_PROFILE to notarize)."
+fi
 echo ">> done: $OUT"
