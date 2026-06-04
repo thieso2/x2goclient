@@ -240,11 +240,15 @@ do {
             }
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             let f2 = await capture(d2)
-            print(String(format: "S2: %@ display=%@ rendered=%.0f%%", sid2, d2, f2 * 100))
+            // Capture again a few seconds later — catches "renders then goes black"
+            // (e.g. re-running the desktop command on resume disrupting the session).
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            let f2b = await capture(d2)
+            print(String(format: "S2: %@ display=%@ rendered=%.0f%% then=%.0f%%", sid2, d2, f2 * 100, f2b * 100))
             let resumed = (sid2 == sid1)
             let statusOK = (st == expStatus)
             let idOK = (mode == "terminate") ? !resumed : resumed
-            let renderOK = f2 > 0.02
+            let renderOK = f2 > 0.02 && f2b > 0.02
             let pass = statusOK && idOK && renderOK
             print("\(mode): status=\(statusOK ? "ok" : "BAD") reconnect=\(idOK ? "ok" : "BAD")(resumed=\(resumed)) render=\(renderOK ? "ok" : "BAD") -> \(pass ? "PASS ✅" : "FAIL ❌")")
             allPass = allPass && pass

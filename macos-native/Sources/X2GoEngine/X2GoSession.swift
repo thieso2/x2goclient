@@ -135,10 +135,12 @@ public actor X2GoSession {
         }
 
         var cookie = "", serverDisp = "", sid = "", pid = "", grPort = 0
+        var isResume = false
         switch choice {
         case .cancel:
             throw EngineError.cancelled
         case .resume(let s):
+            isResume = true
             phase = .resuming
             let out = try await ssh.exec(X2GoCommand.resumeSession(
                 id: s.sessionId, geometry: geo, link: config.link, pack: config.pack,
@@ -165,8 +167,10 @@ public actor X2GoSession {
         }
         self.sessionId = sid; self.serverDisplay = serverDisp; self.agentPid = pid
 
-        // Disable remote compositing before the desktop draws (capture path needs it).
-        if config.disableServerCompositing {
+        // Disable remote compositing before the desktop draws (capture path needs
+        // it). New sessions only — on resume the desktop is already configured and
+        // running; touching it would be pointless.
+        if config.disableServerCompositing, !isResume {
             _ = try? await ssh.exec(Self.disableCompositingSnippet)
         }
 
@@ -193,11 +197,15 @@ public actor X2GoSession {
         try options.write(toFile: sessionDir + "/options", atomically: true, encoding: .utf8)
         try startNxproxy(display: disp, sessionDir: sessionDir, serverDisplay: serverDisp)
 
-        // Launch the desktop in the session (v1: no sound).
-        phase = .runningCommand
-        _ = try await ssh.exec(X2GoCommand.runCommand(
-            display: serverDisp, agentPid: pid, sessionId: sid, sndPort: "-1",
-            command: config.command, kind: config.kind))
+        // Launch the desktop — NEW sessions only. On resume the desktop is already
+        // running; re-running x2goruncommand would start a second session manager
+        // that disrupts the resumed desktop (it shows briefly then goes black).
+        if !isResume {
+            phase = .runningCommand
+            _ = try await ssh.exec(X2GoCommand.runCommand(
+                display: serverDisp, agentPid: pid, sessionId: sid, sndPort: "-1",
+                command: config.command, kind: config.kind))
+        }
 
         self.localDisplay = disp
         phase = .connected
