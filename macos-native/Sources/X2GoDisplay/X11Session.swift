@@ -4,20 +4,22 @@ import CX11
 /// Bridges to the X display that nxproxy renders the X2Go session onto.
 /// Owns a background capture loop filling a BGRA buffer, and forwards input via
 /// XTEST. This is the single seam to replace with a native NX decoder later.
-final class X11Session: @unchecked Sendable {
+public final class X11Session: @unchecked Sendable {
     private var dpy: OpaquePointer?
-    private(set) var window: UInt64 = 0
-    private(set) var width = 0
-    private(set) var height = 0
+    public private(set) var window: UInt64 = 0
+    public private(set) var width = 0
+    public private(set) var height = 0
 
     private var buffer: UnsafeMutablePointer<UInt8>?
     private let lock = NSLock()
     private var running = false
     private var thread: Thread?
 
+    public init() {}
+
     /// Connect, locate the X2GO session window. `displayName` e.g. ":0".
     /// `windowPrefix` defaults to "X2GO-".
-    func connect(displayName: String?, windowPrefix: String = "") -> Bool {
+    public func connect(displayName: String?, windowPrefix: String = "") -> Bool {
         dpy = displayName?.withCString { cx11_open($0) } ?? cx11_open(nil)
         guard dpy != nil else { return false }
 
@@ -59,7 +61,7 @@ final class X11Session: @unchecked Sendable {
         return false
     }
 
-    func start() {
+    public func start() {
         guard !running, dpy != nil, window != 0 else { return }
         running = true
         let t = Thread { [weak self] in self?.captureLoop() }
@@ -69,7 +71,7 @@ final class X11Session: @unchecked Sendable {
         t.start()
     }
 
-    func stop() { running = false }
+    public func stop() { running = false }
 
     private func captureLoop() {
         guard let buf = buffer else { return }
@@ -83,7 +85,7 @@ final class X11Session: @unchecked Sendable {
     }
 
     /// Hand the latest frame to a consumer under lock (for Metal upload).
-    func withFrame(_ body: (UnsafeRawPointer, Int, Int) -> Void) {
+    public func withFrame(_ body: (UnsafeRawPointer, Int, Int) -> Void) {
         guard let buf = buffer, width > 0, height > 0 else { return }
         lock.lock()
         body(UnsafeRawPointer(buf), width, height)
@@ -93,27 +95,27 @@ final class X11Session: @unchecked Sendable {
     // MARK: - Input (view coords are top-left, in *pixels* of the session)
 
     /// Inject pointer motion to a session-pixel (window-relative) coordinate.
-    func moveMouse(toSessionX x: Int, y: Int) {
+    public func moveMouse(toSessionX x: Int, y: Int) {
         guard dpy != nil, window != 0 else { return }
         cx11_motion(dpy, Int32(x), Int32(y))
     }
 
-    func mouseButton(_ button: Int, press: Bool) {
+    public func mouseButton(_ button: Int, press: Bool) {
         guard dpy != nil else { return }
         cx11_button(dpy, Int32(button), press ? 1 : 0)
     }
 
-    func scroll(up: Bool, amount: Int) {
+    public func scroll(up: Bool, amount: Int) {
         guard dpy != nil else { return }
         cx11_scroll(dpy, up ? 1 : 0, Int32(max(1, amount)))
     }
 
-    func key(keysym: UInt32, press: Bool) {
+    public func key(keysym: UInt32, press: Bool) {
         guard dpy != nil else { return }
         cx11_key_sym(dpy, keysym, press ? 1 : 0)
     }
 
-    func flush() { if dpy != nil { cx11_flush(dpy) } }
+    public func flush() { if dpy != nil { cx11_flush(dpy) } }
 
     deinit {
         stop()

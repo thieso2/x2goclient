@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import X2GoDisplay
 
 /// Native NSView backed by a CAMetalLayer. Drives the capture→upload→draw loop
 /// and forwards native NSEvent input to the session via XTEST.

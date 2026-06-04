@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import X2GoDisplay
 
 // Native macOS X2Go display client — SwiftUI + Metal.
 // Launched per-connection by x2goclient with:

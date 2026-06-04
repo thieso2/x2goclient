@@ -7,14 +7,16 @@ import CX11
 ///  - serves X paste requests with the latest macOS text (mac → X), and
 ///  - mirrors X copies onto the macOS pasteboard (X → mac).
 /// A single `lastText` guards against ping-pong loops.
-final class ClipboardBridge: @unchecked Sendable {
+public final class ClipboardBridge: @unchecked Sendable {
     private var clip: OpaquePointer?
     private var thread: Thread?
     private var running = false
     private var lastText = ""
     private var lastMacCount = 0
 
-    func start(display: String?) {
+    public init() {}
+
+    public func start(display: String?) {
         clip = display?.withCString { cx11_clip_open($0) } ?? cx11_clip_open(nil)
         guard clip != nil else { return }
         lastMacCount = NSPasteboard.general.changeCount
@@ -24,7 +26,7 @@ final class ClipboardBridge: @unchecked Sendable {
         thread = t; t.start()
     }
 
-    func stop() { running = false }
+    public func stop() { running = false }
 
     private func loop() {
         while running {
