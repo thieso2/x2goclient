@@ -3166,11 +3166,52 @@ void ONMainWindow::continueNormalSession()
         slotListSessions(true,QString(),0);
         return;
     }
+
+    // Native macOS (Xvfb + Metal) path: disable the server-side xfwm4 compositor
+    // BEFORE the desktop starts (see slotDisableServerCompositing). Fired from its
+    // own event-loop turn via a 0ms timer: issuing it back-to-back with the
+    // x2golistsessions command below races at the libssh layer and one of the two
+    // gets dropped. The timer still runs long before the session command launches
+    // the desktop.
+    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
+        QTimer::singleShot ( 0, this, SLOT ( slotDisableServerCompositing() ) );
+
     if ( !shadowSession )
         sshConnection->executeCommand ( "export HOSTNAME && x2golistsessions", this,SLOT ( slotListSessions ( bool, QString,int )));
     else
         sshConnection->executeCommand ( "export HOSTNAME && x2golistdesktops", this,SLOT ( slotListSessions ( bool, QString,int )));
 
+}
+
+void ONMainWindow::slotDisableServerCompositing()
+{
+    // Edit xfwm4's xfconf XML so use_compositing=false before the desktop starts.
+    // With a compositor the desktop is drawn to a COMPOSITE overlay window, so the
+    // root window the native Metal client captures holds only stale/garbage
+    // content (the move/expose "trails" and black halos). xfconfd isn't running
+    // yet, so we edit the file directly (which also avoids a live toggle that
+    // would blank xfdesktop's wallpaper). Handles the property being present,
+    // absent, or the file not existing. Harmless no-op on non-XFCE servers.
+    if ( !sshConnection )
+        return;
+    // NB: must contain NO single quotes — SshProcess wraps the command in
+    // bash -l -c '...', so a single quote here would terminate that wrapper. We
+    // therefore use only double quotes (run directly by the wrapping bash).
+    QString xfwmCfg=
+        "F=$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml; "
+        "mkdir -p \"$(dirname \"$F\")\"; "
+        "if [ ! -f \"$F\" ]; then printf \"<?xml version=\\\"1.0\\\" "
+        "encoding=\\\"UTF-8\\\"?>\\n<channel name=\\\"xfwm4\\\" "
+        "version=\\\"1.0\\\">\\n  <property name=\\\"general\\\" "
+        "type=\\\"empty\\\">\\n    <property name=\\\"use_compositing\\\" "
+        "type=\\\"bool\\\" value=\\\"false\\\"/>\\n  </property>\\n"
+        "</channel>\\n\" > \"$F\"; "
+        "elif grep -q use_compositing \"$F\"; then "
+        "sed -i \"s/\\(use_compositing\\\"[^>]*value=\\\"\\)true/\\1false/\" \"$F\"; "
+        "else sed -i \"/name=\\\"general\\\"/a <property "
+        "name=\\\"use_compositing\\\" type=\\\"bool\\\" value=\\\"false\\\"/>\" "
+        "\"$F\"; fi";
+    sshConnection->executeCommand ( xfwmCfg );
 }
 
 void ONMainWindow::continueLDAPSession()
@@ -6656,16 +6697,6 @@ void ONMainWindow::runCommand()
         sshConnection->executeCommand ( cmd, this,  SLOT ( slotRetRunCommand ( bool,
                                         QString,
                                         int ) ));
-
-        // Native macOS (Xvfb + Metal) path: a compositing window manager on the
-        // server (e.g. xfwm4) leaves move/expose "trails" when its compositor
-        // output is relayed through nxagent -> nxproxy. Turn the xfwm4 compositor
-        // off for this session once it is up. Deferred (not issued back-to-back
-        // with the session-start command, which would not dispatch) and the
-        // remote side retries while xfconfd/xfwm4 come up.
-        if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) && !resumingSession.published )
-            QTimer::singleShot ( 3000, this,
-                                 SLOT ( slotDisableRemoteCompositing() ) );
     }
 #ifdef Q_WS_HILDON
     //wait 5 seconds and execute xkbcomp
@@ -6673,22 +6704,6 @@ void ONMainWindow::runCommand()
 #endif
 }
 
-
-void ONMainWindow::slotDisableRemoteCompositing()
-{
-    // Disable the remote xfwm4 compositor for the running session (native macOS
-    // Xvfb+Metal path). xfwm4 honours the change live; harmless no-op on non-XFCE
-    // desktops / servers without xfconf. The remote loop retries for ~12s because
-    // xfconfd/xfwm4 may not be ready immediately after the session starts.
-    if ( !sshConnection || resumingSession.display.isEmpty() )
-        return;
-    QString cmd=
-        "DISPLAY=:"+resumingSession.display+
-        " setsid sh -c 'for i in 1 2 3 4 5 6; do "
-        "xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false "
-        "2>/dev/null; sleep 2; done' 1>/dev/null 2>/dev/null & exit";
-    sshConnection->executeCommand ( cmd );
-}
 
 void ONMainWindow::runApplication(QString exec)
 {

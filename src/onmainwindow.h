@@ -1087,10 +1087,10 @@ private slots:
     void slotTestSessionStatus();
     void slotRetRunCommand ( bool result, QString output,
                              int );
-    // Native macOS (Xvfb + Metal): disable the remote xfwm4 compositor a few
-    // seconds after session start (its output causes move/expose trails over
-    // nxagent -> nxproxy). No-op on non-XFCE servers.
-    void slotDisableRemoteCompositing();
+    // Native macOS (Xvfb + Metal): turn the server-side xfwm4 compositor off
+    // before the desktop starts (its overlay output makes the captured root
+    // window show trails/black halos). No-op on non-XFCE servers.
+    void slotDisableServerCompositing();
     void slotGetServers ( bool result, QString output,
                           int );
     void slotListAllSessions ( bool result,QString output,
