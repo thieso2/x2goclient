@@ -1,5 +1,13 @@
 # Implementation Plan — Native X2Go client via embedded Xvfb + Metal
 
+> **STATUS (implemented):** Phases 1–3 working and validated end-to-end against
+> 10.248.1.20. The full XFCE desktop renders pixel-perfect in the native Metal
+> window (`docs-xvfb-metal.png`); XTEST input launches apps (terminal renders
+> with live prompt + menus). The hand-written `x2go-xserver` has been removed
+> (kept in git history). Launch: `./macos-native/run-native.sh`. Remaining =
+> Phase 4 polish (XDAMAGE partial updates, XFIXES cursor, RANDR resize,
+> clipboard, app bundling).
+
 **Decision:** drop the hand-written X11 server and use a real, complete X server
 (**Xvfb**) as nxproxy's display, presenting its framebuffer in the native Metal
 window and feeding input back via XTEST. Trade incompleteness for completeness;
