@@ -37,6 +37,22 @@ rm -f /tmp/.X${DISP}-lock /tmp/.X11-unix/X${DISP} 2>/dev/null
 XVFB_PID=$!
 sleep 2
 
+# Match the X keyboard layout to the macOS layout BEFORE connecting: nxagent
+# copies the client (Xvfb) keymap at session start, and runs "keycode conversion
+# off" (so only that keymap matters). This is what makes öäüß etc. type.
+maclayout=$(defaults read ~/Library/Preferences/com.apple.HIToolbox.plist AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null)
+case "$maclayout" in
+  *German*)     XKB="de";;   *Swiss*)      XKB="ch";;
+  *British*)    XKB="gb";;   *French*)     XKB="fr";;
+  *Spanish*)    XKB="es";;   *Italian*)    XKB="it";;
+  *Portuguese*) XKB="pt";;   *Dutch*)      XKB="nl";;
+  *Norwegian*)  XKB="no";;   *Swedish*)    XKB="se";;
+  *Danish*)     XKB="dk";;   *Finnish*)    XKB="fi";;
+  *) XKB="us";;
+esac
+echo ">> setting X keyboard layout to '$XKB' (macOS: ${maclayout:-unknown})"
+DISPLAY=:$DISP /opt/X11/bin/setxkbmap "$XKB" 2>/dev/null
+
 echo ">> connecting x2goclient (DISPLAY=:$DISP) — renders the session onto Xvfb"
 DISPLAY=:$DISP "$APP" \
   --session-conf="$HOME/x2go-test-sessions" \

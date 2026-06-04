@@ -34,9 +34,10 @@ echo ">> copying $SRC -> $OUT ..."
 rm -rf "$OUT"; mkdir -p "$HERE/dist"; cp -R "$SRC" "$OUT"
 mkdir -p "$LIBS" "$X11BIN" "$X11FONTS/misc" "$X11XKB" "$C/exe"
 
-cp "$OPT/bin/Xvfb"     "$X11BIN/Xvfb"
-cp "$OPT/bin/xkbcomp"  "$X11BIN/xkbcomp"
-cp "$NATIVE_BIN"       "$C/exe/X2GoNative"
+cp "$OPT/bin/Xvfb"      "$X11BIN/Xvfb"
+cp "$OPT/bin/xkbcomp"   "$X11BIN/xkbcomp"
+cp "$OPT/bin/setxkbmap" "$X11BIN/setxkbmap"   # to match the macOS keyboard layout
+cp "$NATIVE_BIN"        "$C/exe/X2GoNative"
 
 # --- gather the full /opt/X11 dylib closure into Contents/x11libs ---
 echo ">> gathering X11 dylib closure..."
@@ -49,7 +50,7 @@ add_closure() {
     [ -f "$LIBS/$b" ] || { cp "$d" "$LIBS/$b" 2>/dev/null && chmod u+w "$LIBS/$b"; }
   done
 }
-for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$C/exe/X2GoNative"; do add_closure "$f"; done
+for f in "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$X11BIN/setxkbmap" "$C/exe/X2GoNative"; do add_closure "$f"; done
 # fixpoint over the bundled libs (deps of deps)
 for _ in 1 2 3 4 5 6; do for d in "$LIBS"/*.dylib; do add_closure "$d"; done; done
 echo "   bundled $(ls "$LIBS" | wc -l | tr -d ' ') dylibs"
@@ -66,6 +67,7 @@ relink() { # rewrite every /opt/X11/lib ref in $1 to @rpath
 for d in "$LIBS"/*.dylib; do install_name_tool -id "@rpath/$(basename "$d")" "$d" 2>/dev/null || true; relink "$d"; done
 relink "$X11BIN/Xvfb";        install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/Xvfb"
 relink "$X11BIN/xkbcomp";     install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/xkbcomp"
+relink "$X11BIN/setxkbmap";  install_name_tool -add_rpath "@executable_path/../../../x11libs" "$X11BIN/setxkbmap"
 relink "$C/exe/X2GoNative";   install_name_tool -add_rpath "@executable_path/../x11libs" "$C/exe/X2GoNative"
 # nxproxy (wrapper + real) + libXcomp use only libpng -> point at the bundled copy
 for nx in "$C/exe/nxproxy" "$C/exe/nxproxy.real"; do
@@ -97,6 +99,15 @@ export XKB_BINDIR="$BIN"
 XVFB=$!
 sleep 1.5
 export DISPLAY=:$DISP
+# Match the X keyboard layout to macOS BEFORE the session connects (nxagent
+# copies the client keymap at startup) so umlauts/accents type correctly.
+ml=$(defaults read ~/Library/Preferences/com.apple.HIToolbox.plist AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null)
+case "$ml" in
+  *German*) XL=de;; *Swiss*) XL=ch;; *British*) XL=gb;; *French*) XL=fr;;
+  *Spanish*) XL=es;; *Italian*) XL=it;; *Portuguese*) XL=pt;; *Dutch*) XL=nl;;
+  *Norwegian*) XL=no;; *Swedish*) XL=se;; *Danish*) XL=dk;; *Finnish*) XL=fi;; *) XL=us;;
+esac
+"$BIN/setxkbmap" "$XL" 2>/dev/null
 "$D/exe/X2GoNative" --display ":$DISP" >/tmp/x2go-native.log 2>&1 &
 NATIVE=$!
 cleanup() { kill "$NATIVE" "$XVFB" 2>/dev/null; rm -f "/tmp/.X${DISP}-lock"; }
@@ -118,7 +129,7 @@ echo "   remaining /opt/X11 references: $LEFT (want 0)"
 # individually (codesign --deep does NOT cover binaries under Resources/), then
 # the whole bundle. On Apple Silicon an invalid signature => instant SIGKILL.
 echo ">> codesigning bundled binaries..."
-for f in "$LIBS"/*.dylib "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$C/exe/X2GoNative" \
+for f in "$LIBS"/*.dylib "$X11BIN/Xvfb" "$X11BIN/xkbcomp" "$X11BIN/setxkbmap" "$C/exe/X2GoNative" \
          "$C/exe/nxproxy" "$C/exe/nxproxy.real" "$C/exe/libXcomp.3.dylib"; do
   [ -f "$f" ] && codesign --force -s - "$f" >/dev/null 2>&1
 done
