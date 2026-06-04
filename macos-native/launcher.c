@@ -12,8 +12,19 @@
 #include <unistd.h>
 #include <spawn.h>
 #include <mach-o/dyld.h>
+#include <ApplicationServices/ApplicationServices.h>  /* CGDisplay* */
 
 extern char **environ;
+
+/* Logical (point) size of the main display, so the native Metal window — which
+ * sizes itself to the Xvfb root — fills the screen at 1:1 points. Falls back to
+ * 1280x800. Clamped to sane bounds. */
+static void main_display_size(int *w, int *h) {
+    CGDirectDisplayID d = CGMainDisplayID();
+    size_t pw = CGDisplayPixelsWide(d), ph = CGDisplayPixelsHigh(d);
+    *w = (pw >= 640 && pw <= 8192) ? (int)pw : 1280;
+    *h = (ph >= 480 && ph <= 8192) ? (int)ph : 800;
+}
 
 /* Map the current macOS keyboard layout to an XKB layout code. */
 static const char *mac_xkb(void) {
@@ -64,9 +75,17 @@ int main(int argc, char **argv) {
     char dispstr[16]; snprintf(dispstr, sizeof(dispstr), ":%d", disp);
     setenv("XKB_BINDIR", bin, 1);
     setenv("DISPLAY", dispstr, 1);
+    /* The session must render at exactly the Xvfb root size or the nxproxy replay
+     * corrupts (overlapping window/panel trails). We can't know the user's
+     * profile geometry before Xvfb starts, so size Xvfb to the screen and force
+     * the session fullscreen (-> session geometry == Xvfb root). */
+    setenv("X2GO_FORCE_FULLSCREEN", "1", 1);
+
+    int sw, sh; main_display_size(&sw, &sh);
+    char screen[32]; snprintf(screen, sizeof(screen), "%dx%dx24", sw, sh);
 
     pid_t pid;
-    char *xvfb_argv[] = { xvfb, dispstr, "-screen", "0", "1280x800x24",
+    char *xvfb_argv[] = { xvfb, dispstr, "-screen", "0", screen,
                           "-ac", "-noreset", "-fp", fonts, "-xkbdir", xkb, NULL };
     posix_spawn(&pid, xvfb, NULL, NULL, xvfb_argv, environ);
     sleep(2);

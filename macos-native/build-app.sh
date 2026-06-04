@@ -92,7 +92,8 @@ cp -R "$OPT/share/X11/xkb/."    "$X11XKB/"        2>/dev/null || true
 #     notarization). Real Qt binary -> x2goclient.real. ---
 echo ">> compiling launcher..."
 if [ ! -f "$C/MacOS/x2goclient.real" ]; then mv "$C/MacOS/x2goclient" "$C/MacOS/x2goclient.real"; fi
-clang -arch arm64 -O2 "$HERE/launcher.c" -o "$C/MacOS/x2goclient" || { echo "launcher build failed"; exit 1; }
+clang -arch arm64 -O2 "$HERE/launcher.c" -o "$C/MacOS/x2goclient" \
+  -framework ApplicationServices || { echo "launcher build failed"; exit 1; }
 
 # --- verify self-contained + sign ---
 echo ">> verifying no /opt/X11 references remain in bundled Mach-O..."

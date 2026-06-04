@@ -3962,6 +3962,13 @@ void ONMainWindow::startNewSession()
     if (defaultLayout.size()>0)
         layout=cbLayout->currentText();
 
+    // Native macOS (Xvfb + Metal) path: the bundled Xvfb owns the display and the
+    // Metal window presents its whole root. Force the session to fullscreen so its
+    // geometry always equals the Xvfb root size. Any explicit width/height that
+    // differs from the Xvfb size corrupts the nxproxy replay (overlapping
+    // window/panel "trails"). Set by macos-native/launcher.c.
+    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
+        fullscreen=true;
 
     QString geometry;
     if ( fullscreen )
@@ -4228,6 +4235,11 @@ void ONMainWindow::resumeSession ( const x2goSession& s )
 
     if (defaultLayout.size()>0)
         layout=cbLayout->currentText();
+
+    // Native macOS (Xvfb + Metal) path: force fullscreen so the session geometry
+    // always matches the bundled Xvfb root size (see comment above / launcher.c).
+    if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) )
+        fullscreen=true;
 
     QString geometry;
 #ifdef Q_OS_WIN
@@ -6644,6 +6656,16 @@ void ONMainWindow::runCommand()
         sshConnection->executeCommand ( cmd, this,  SLOT ( slotRetRunCommand ( bool,
                                         QString,
                                         int ) ));
+
+        // Native macOS (Xvfb + Metal) path: a compositing window manager on the
+        // server (e.g. xfwm4) leaves move/expose "trails" when its compositor
+        // output is relayed through nxagent -> nxproxy. Turn the xfwm4 compositor
+        // off for this session once it is up. Deferred (not issued back-to-back
+        // with the session-start command, which would not dispatch) and the
+        // remote side retries while xfconfd/xfwm4 come up.
+        if ( getenv ( "X2GO_FORCE_FULLSCREEN" ) && !resumingSession.published )
+            QTimer::singleShot ( 3000, this,
+                                 SLOT ( slotDisableRemoteCompositing() ) );
     }
 #ifdef Q_WS_HILDON
     //wait 5 seconds and execute xkbcomp
@@ -6651,6 +6673,22 @@ void ONMainWindow::runCommand()
 #endif
 }
 
+
+void ONMainWindow::slotDisableRemoteCompositing()
+{
+    // Disable the remote xfwm4 compositor for the running session (native macOS
+    // Xvfb+Metal path). xfwm4 honours the change live; harmless no-op on non-XFCE
+    // desktops / servers without xfconf. The remote loop retries for ~12s because
+    // xfconfd/xfwm4 may not be ready immediately after the session starts.
+    if ( !sshConnection || resumingSession.display.isEmpty() )
+        return;
+    QString cmd=
+        "DISPLAY=:"+resumingSession.display+
+        " setsid sh -c 'for i in 1 2 3 4 5 6; do "
+        "xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false "
+        "2>/dev/null; sleep 2; done' 1>/dev/null 2>/dev/null & exit";
+    sshConnection->executeCommand ( cmd );
+}
 
 void ONMainWindow::runApplication(QString exec)
 {
