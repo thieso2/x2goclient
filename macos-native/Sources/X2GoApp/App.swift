@@ -1,66 +1,21 @@
 import SwiftUI
 import AppKit
+import X2GoEngine
+import X2GoProtocol
+import X2GoSSH
 import X2GoDisplay
 
-// Native macOS X2Go display client — SwiftUI + Metal.
-// Launched per-connection by x2goclient with:
-//   --display :N  --geometry WxH  [--fullscreen]  [--title <name>]
+// Native macOS X2Go client — one SwiftUI app, pure-Swift engine, in-app Metal
+// display. P4: a single hard-coded connection window (Session Manager +
+// multi-window arrive in P5/P6). No Qt, no external viewer.
 
 @MainActor
-@Observable
-final class SessionModel {
-    enum State { case connecting, connected, failed(String) }
-    var state: State = .connecting
-
-    let session = X11Session()
-    let clipboard = ClipboardBridge()
-    var renderer: MetalRenderer?
-    let zoom = ZoomControl()
-
-    let title: String
-    let wantFullscreen: Bool
-    let initialSize: CGSize
-
-    private let display: String
-    private let prefix: String
-
-    init(display: String, prefix: String, geometry: CGSize,
-         title: String, fullscreen: Bool) {
-        self.display = display
-        self.prefix = prefix
-        self.title = title
-        self.wantFullscreen = fullscreen
-        // Open no larger than the visible screen; the viewer fits/scrolls beyond.
-        let vis = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
-        self.initialSize = CGSize(width: min(geometry.width, vis.width),
-                                  height: min(geometry.height, vis.height))
-    }
-
-    func connect() {
-        guard let r = MetalRenderer() else {
-            state = .failed("Metal device/pipeline unavailable")
-            return
-        }
-        renderer = r
-        let session = self.session
-        let display = self.display, prefix = self.prefix
-        Task.detached(priority: .userInitiated) {
-            let ok = session.connect(displayName: display, windowPrefix: prefix)
-            await MainActor.run {
-                if ok {
-                    session.start()
-                    self.clipboard.start(display: display)   // copy/paste X ↔ macOS
-                    self.state = .connected
-                } else {
-                    let what = prefix.isEmpty ? "display \(display) (is Xvfb running?)" : "'\(prefix)' window on \(display)"
-                    self.state = .failed("Could not connect to \(what).\nStart Xvfb and the X2Go session first.")
-                }
-            }
-        }
-    }
+final class AppState {
+    static let shared = AppState()
+    var vm: ConnectionViewModel?
 }
 
-/// Thin handle the View menu talks to; wired to the live scroll view.
+/// The View menu's zoom commands talk to the live scroll view through this.
 @MainActor
 final class ZoomControl {
     weak var scrollView: RemoteScrollView?
@@ -70,48 +25,42 @@ final class ZoomControl {
     func fit()        { scrollView?.fit() }
 }
 
+/// Hosts the live remote display (RemoteScrollView + RemoteMetalView).
 struct MetalHost: NSViewRepresentable {
-    let model: SessionModel
-    func makeNSView(context: Context) -> RemoteScrollView {
-        guard let r = model.renderer else {
-            return RemoteScrollView(metalView: RemoteMetalView(renderer: MetalRenderer()!, session: model.session),
-                                    sessionSize: .init(width: 1, height: 1))
-        }
-        let mv = RemoteMetalView(renderer: r, session: model.session)
+    let vm: ConnectionViewModel
+    func makeNSView(context: Context) -> NSView {
+        guard let r = vm.renderer, let x = vm.x11 else { return NSView() }
+        let mv = RemoteMetalView(renderer: r, session: x)
         mv.startRendering()
-        let sv = RemoteScrollView(
-            metalView: mv,
-            sessionSize: NSSize(width: model.session.width, height: model.session.height))
-        model.zoom.scrollView = sv
-        let wantFs = model.wantFullscreen
-        let title = model.title
+        let sv = RemoteScrollView(metalView: mv, sessionSize: vm.sessionSize)
+        vm.zoom.scrollView = sv
+        let wantFs = vm.wantFullscreen
+        let title = vm.title
         DispatchQueue.main.async {
             mv.window?.makeFirstResponder(mv)
             if !title.isEmpty { mv.window?.title = title }
-            if wantFs, let w = mv.window,
-               !w.styleMask.contains(.fullScreen) {
+            if wantFs, let w = mv.window, !w.styleMask.contains(.fullScreen) {
                 w.toggleFullScreen(nil)
             }
         }
         return sv
     }
-    func updateNSView(_ nsView: RemoteScrollView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-struct ContentView: View {
-    @State var model: SessionModel
+struct ConnectionView: View {
+    @State var vm: ConnectionViewModel
     var body: some View {
         ZStack {
             Color.black
-            switch model.state {
-            case .connecting:
+            switch vm.state {
+            case .connecting(let msg):
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Connecting to X2Go session…").foregroundStyle(.secondary)
+                    Text(msg).foregroundStyle(.secondary)
                 }
             case .connected:
-                MetalHost(model: model)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                MetalHost(vm: vm).frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let msg):
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -119,7 +68,7 @@ struct ContentView: View {
                 }.padding()
             }
         }
-        .onAppear { model.connect() }
+        .onAppear { vm.connect() }
     }
 }
 
@@ -129,62 +78,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+
+    /// Suspend the session before quitting (kills nxproxy/Xvfb cleanly).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let vm = AppState.shared.vm else { return .terminateNow }
+        Task {
+            await vm.teardown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 }
 
 @main
-struct X2GoNativeApp: App {
+struct X2GoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @State private var model: SessionModel
+    @State private var vm: ConnectionViewModel
 
     init() {
-        // CLI: --display :N [--prefix P] [--geometry WxH] [--fullscreen] [--title T]
-        var display = ProcessInfo.processInfo.environment["DISPLAY"] ?? ":99"
-        var prefix = ""
-        var title = "X2Go (native · Metal)"
-        var fullscreen = false
-        var geom = CGSize(width: 1280, height: 800)
-        let args = CommandLine.arguments
-        var i = 0
-        while i < args.count {
-            switch args[i] {
-            case "--display"  where i + 1 < args.count: display = args[i + 1]; i += 1
-            case "--prefix"   where i + 1 < args.count: prefix = args[i + 1]; i += 1
-            case "--title"    where i + 1 < args.count: title = args[i + 1]; i += 1
-            case "--fullscreen": fullscreen = true
-            case "--geometry" where i + 1 < args.count:
-                let parts = args[i + 1].lowercased().split(separator: "x")
-                if parts.count == 2, let w = Double(parts[0]), let h = Double(parts[1]) {
-                    geom = CGSize(width: w, height: h)
-                }
-                i += 1
-            default: break
-            }
-            i += 1
-        }
-        _model = State(initialValue: SessionModel(display: display, prefix: prefix,
-                                                  geometry: geom, title: title,
-                                                  fullscreen: fullscreen))
+        let config = Self.devConfig()
+        let model = ConnectionViewModel(config: config, title: "X2Go — \(config.endpoint.host)")
+        _vm = State(initialValue: model)
+        AppState.shared.vm = model
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
+            ConnectionView(vm: vm)
         }
-        .defaultSize(width: model.initialSize.width, height: model.initialSize.height)
+        .defaultSize(width: 1280, height: 800)
         .commands {
-            // Merge into the existing (system) View menu rather than adding a
-            // second one. .sidebar maps to the View menu region.
             CommandGroup(after: .sidebar) {
-                Button("Zoom In")       { model.zoom.zoomIn() }
+                Button("Zoom In") { AppState.shared.vm?.zoom.zoomIn() }
                     .keyboardShortcut("=", modifiers: .command)
-                Button("Zoom Out")      { model.zoom.zoomOut() }
+                Button("Zoom Out") { AppState.shared.vm?.zoom.zoomOut() }
                     .keyboardShortcut("-", modifiers: .command)
-                Button("Actual Size")   { model.zoom.actualSize() }
+                Button("Actual Size") { AppState.shared.vm?.zoom.actualSize() }
                     .keyboardShortcut("0", modifiers: .command)
-                Button("Fit to Window") { model.zoom.fit() }
+                Button("Fit to Window") { AppState.shared.vm?.zoom.fit() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                 Divider()
             }
         }
+    }
+
+    /// P4 hard-coded connection (the test server). P5 replaces this with profiles.
+    static func devConfig() -> X2GoSession.Config {
+        let key = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh/id_x2go_test")
+        return X2GoSession.Config(
+            endpoint: SSHEndpoint(host: "10.248.1.20", username: "thies"),
+            credentials: [.privateKeyFile(key)],
+            command: "startxfce4",
+            kind: .desktop,
+            displayMode: .custom(width: 1280, height: 800),
+            screen: Geometry(width: 1280, height: 800),
+            tools: AppTools.resolve(),
+            preferResume: true)
     }
 }
