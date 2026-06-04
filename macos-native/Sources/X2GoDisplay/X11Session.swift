@@ -14,6 +14,7 @@ public final class X11Session: @unchecked Sendable {
     private let lock = NSLock()
     private var running = false
     private var thread: Thread?
+    private let stopped = DispatchSemaphore(value: 0)
 
     public init() {}
 
@@ -71,9 +72,16 @@ public final class X11Session: @unchecked Sendable {
         t.start()
     }
 
-    public func stop() { running = false }
+    /// Stop the capture loop and wait until it has actually exited, so no Xlib
+    /// call races a torn-down Xvfb (which would trigger an XIO fatal abort).
+    public func stop() {
+        guard running else { return }
+        running = false
+        _ = stopped.wait(timeout: .now() + 1.0)
+    }
 
     private func captureLoop() {
+        defer { stopped.signal() }
         guard let buf = buffer else { return }
         let interval: TimeInterval = 1.0 / 30.0
         while running {
@@ -117,9 +125,16 @@ public final class X11Session: @unchecked Sendable {
 
     public func flush() { if dpy != nil { cx11_flush(dpy) } }
 
-    deinit {
+    /// Stop capturing and close the X connection. Call this BEFORE the Xvfb it
+    /// talks to is killed, otherwise Xlib raises an XIO fatal error. Idempotent.
+    public func close() {
         stop()
-        buffer?.deallocate()
-        if dpy != nil { cx11_close(dpy) }
+        lock.lock()
+        if dpy != nil { cx11_close(dpy); dpy = nil }
+        buffer?.deallocate(); buffer = nil
+        window = 0
+        lock.unlock()
     }
+
+    deinit { close() }
 }
