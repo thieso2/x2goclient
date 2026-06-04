@@ -85,7 +85,7 @@ struct ProfileEditor: View {
                     Picker("Clipboard", selection: $profile.clipboard) {
                         ForEach(ClipboardMode.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
                     }
-                    TextField("Keyboard layout", text: $profile.keyboardLayout)
+                    LabeledContent("Keyboard", value: "follows macOS layout")
                 }
             }
             .formStyle(.grouped)

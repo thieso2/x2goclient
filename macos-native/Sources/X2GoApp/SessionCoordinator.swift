@@ -28,7 +28,10 @@ final class SessionCoordinator {
     /// existing window to the front.
     func connectIfNeeded(profile: SessionProfile, credentials: [SSHCredential]) {
         guard connections[profile.id] == nil else { return }
-        let config = profile.makeConfig(screen: Self.screenGeometry(), tools: tools, credentials: credentials)
+        var config = profile.makeConfig(screen: Self.screenGeometry(), tools: tools, credentials: credentials)
+        // The Xvfb keymap must match what the user types on, or ä/ö/ü/ß etc. have
+        // no keycode and don't type. Always follow the live macOS layout.
+        config.keyboardLayout = AppKeyboard.macLayout()
         let quality = "\(profile.speed.rawValue)·q\(profile.quality)"
         let vm = ConnectionViewModel(profileID: profile.id, config: config, title: profile.name,
                                      qualityLabel: quality)
